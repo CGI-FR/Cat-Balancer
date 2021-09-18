@@ -1,0 +1,10 @@
+# Venom Test Suite definition
+# Check Venom documentation for more information : https://github.com/ovh/venom
+name: run cb
+testcases:
+  - name: no arguments
+    steps:
+      - script: cb
+        assertions:
+          - result.systemerr ShouldContainSubstring awaiting
+          - result.code ShouldEqual 0
