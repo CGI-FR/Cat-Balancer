@@ -33,32 +33,70 @@ type Balancer struct {
 	producerAddress string
 	consumerNetwork string
 	consumerAddress string
-	controler       chan Control
 }
 
 // New Balancer service.
 func New(producerNetwork string, producerAddress string,
 	consumerNetwork string, consumerAddress string) *Balancer {
-	return &Balancer{producerNetwork, producerAddress, consumerNetwork, consumerAddress, nil}
+	return &Balancer{producerNetwork, producerAddress, consumerNetwork, consumerAddress}
 }
 
-type Control int
+type Event int
 
 const (
-	ProducerListenerReady Control = iota
+	ProducerListenerReady Event = iota
+	NewProducer
+	ProducerClose
+
 	ConsumerListenerReady
+	NewConsumer
+	ConsumerClose
 )
+
+type State int
+
+const (
+	Initial State = iota
+	ProducerReady
+	ConsumerReady
+	ProducerAndConsumerReady
+)
+
+type StateEvent struct {
+	state State
+	event Event
+}
+
+func update(state State, event Event) State {
+	switch (StateEvent{state: state, event: event}) {
+	case StateEvent{state: Initial, event: ConsumerListenerReady}:
+		return ConsumerReady
+
+	case StateEvent{state: Initial, event: ProducerListenerReady}:
+		return ProducerReady
+
+	case StateEvent{state: ConsumerReady, event: ProducerListenerReady}:
+		return ProducerAndConsumerReady
+	case StateEvent{state: ProducerReady, event: ConsumerListenerReady}:
+		return ProducerAndConsumerReady
+
+	default:
+		log.Logger.Info().Int("state", int(state)).Int("event", int(event)).Msg("Unknow state and event action")
+
+		return state
+	}
+}
 
 // Start the balancer Service and wait for clients.
 func (b Balancer) Start() {
 	stream := make(chan []byte, 1)
-	b.controler = make(chan Control, 1)
+	events := make(chan Event, 1)
 
 	producer := NewListenerFactory(
-		NewProducerHandler(stream),
+		NewProducerHandler(stream, events),
 		b.producerNetwork,
 		b.producerAddress,
-		func() { b.controler <- ProducerListenerReady },
+		func() { events <- ProducerListenerReady },
 	)
 
 	log.Info().Str("producerAddress", b.producerAddress).Msg("Starting Producer Server")
@@ -66,31 +104,19 @@ func (b Balancer) Start() {
 	go producer.Start()
 
 	consumer := NewListenerFactory(
-		NewConsumerHandler(stream),
+		NewConsumerHandler(stream, events),
 		b.consumerNetwork, b.consumerAddress,
-		func() { b.controler <- ConsumerListenerReady },
+		func() { events <- ConsumerListenerReady },
 	)
 
 	log.Info().Str("ConsumerAddress", b.consumerAddress).Msg("Starting Consumer Server")
 
 	go consumer.Start()
 
-	producerReady := false
-	consumerReady := false
+	state := Initial
 
-	for control := range b.controler {
-		switch control {
-		case ProducerListenerReady:
-			producerReady = true
-		case ConsumerListenerReady:
-			consumerReady = true
-		}
-
-		if consumerReady && producerReady {
-			log.Info().Msg("Balancer is awaiting clients")
-
-			return
-		}
+	for event := range events {
+		state = update(state, event)
 	}
 }
 
@@ -135,14 +161,22 @@ func (l Listener) Start() {
 
 type ProducerHandler struct {
 	stream chan<- []byte
+	events chan<- Event
 }
 
-func NewProducerHandler(stream chan<- []byte) ProducerHandler {
-	return ProducerHandler{stream}
+func NewProducerHandler(stream chan<- []byte, events chan<- Event) ProducerHandler {
+	return ProducerHandler{stream, events}
 }
 
 func (ph ProducerHandler) handleRequest(conn net.Conn) {
-	defer conn.Close()
+	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New Producer")
+	ph.events <- NewProducer
+
+	defer func() {
+		conn.Close()
+		log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("Producer close connection")
+		ph.events <- ProducerClose
+	}()
 
 	reader := bufio.NewReader(conn)
 
@@ -159,16 +193,21 @@ func (ph ProducerHandler) handleRequest(conn net.Conn) {
 
 type ConsumerHandler struct {
 	stream <-chan []byte
+	events chan<- Event
 }
 
-func NewConsumerHandler(stream <-chan []byte) ConsumerHandler {
-	return ConsumerHandler{stream}
+func NewConsumerHandler(stream <-chan []byte, events chan<- Event) ConsumerHandler {
+	return ConsumerHandler{stream, events}
 }
 
 func (ch ConsumerHandler) handleRequest(conn net.Conn) {
+	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New consumer")
+	ch.events <- NewConsumer
+
 	defer func() {
 		conn.Close()
 		log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("Consumer close connection")
+		ch.events <- ConsumerClose
 	}()
 
 	for line := range ch.stream {

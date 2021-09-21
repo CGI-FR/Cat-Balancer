@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/cgi-fr/cat-balancer/pkg/balancer"
 	"github.com/stretchr/testify/assert"
@@ -30,7 +31,9 @@ import (
 func TestBalancerStart(t *testing.T) {
 	b := balancer.New("tcp", ":1123", "tcp", ":1124")
 
-	b.Start()
+	go b.Start()
+
+	time.Sleep(time.Second)
 
 	producer, err := net.Dial("tcp", "localhost:1123")
 	if err != nil {
@@ -64,7 +67,9 @@ func TestBalancerStart(t *testing.T) {
 func TestManyConsumersOneProducer(t *testing.T) {
 	b := balancer.New("tcp", ":1125", "tcp", ":1126")
 
-	b.Start()
+	go b.Start()
+
+	time.Sleep(time.Second)
 
 	producer, err := net.Dial("tcp", "localhost:1125")
 	if err != nil {

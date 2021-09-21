@@ -2,9 +2,42 @@
 # Check Venom documentation for more information : https://github.com/ovh/venom
 name: run cb
 testcases:
-  - name: no arguments
+  - name: one consumer one producer, consumer connect first
     steps:
-      - script: cb
+      - script: rm -f /tmp/ts
+      - script: |
+            cb & \
+            sleep 1 && \
+            nc localhost:1124 < /dev/null  > /tmp/ts & \
+            sleep 1 && \
+            echo "Hello World" | nc localhost:1123 && \
+            sleep 1 && \
+            killall cb 
         assertions:
-          - result.systemerr ShouldContainSubstring awaiting
+          - result.systemerr ShouldContainSubstring Starting Producer Server
+          - result.code ShouldEqual 0
+
+      - script: cat /tmp/ts
+        assertions:
+          - result.systemout ShouldContainSubstring Hello World
+          - result.code ShouldEqual 0
+
+  - name: one consumer one producer, producer connect first
+    steps:
+      - script: rm -f /tmp/ts
+      - script: |
+            cb & \
+            sleep 1 && \
+            echo "Hello World" | nc localhost:1123 & \
+            sleep 1 && \
+            nc localhost:1124 < /dev/null  > /tmp/ts & \
+            sleep 1 && \
+            killall cb
+        assertions:
+          - result.systemerr ShouldContainSubstring Starting Producer Server
+          - result.code ShouldEqual 0
+
+      - script: cat /tmp/ts
+        assertions:
+          - result.systemout ShouldContainSubstring Hello World
           - result.code ShouldEqual 0
