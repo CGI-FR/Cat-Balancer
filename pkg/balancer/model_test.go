@@ -19,7 +19,9 @@ package balancer_test
 
 import (
 	"bufio"
+	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,21 +29,52 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// nolint: paralleltest
+func getFreePorts(n int) ([]int, error) {
+	ports := make([]int, n)
+
+	for k := range ports {
+		addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+		if err != nil {
+			// nolint: wrapcheck
+			return ports, err
+		}
+
+		l, err := net.ListenTCP("tcp", addr)
+		if err != nil {
+			// nolint: wrapcheck
+			return ports, err
+		}
+		// This is done on purpose - we want to keep ports
+		// busy to avoid collisions when getting the next one
+		defer func() { _ = l.Close() }()
+
+		ports[k] = l.Addr().(*net.TCPAddr).Port
+	}
+
+	return ports, nil
+}
+
 func TestBalancerStart(t *testing.T) {
-	b := balancer.New("tcp", ":1123", "tcp", ":1124")
+	t.Parallel()
+
+	ports, err := getFreePorts(2)
+	if err != nil {
+		t.Error(err)
+	}
+
+	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]))
 
 	go b.Start()
 
 	time.Sleep(time.Second)
 
-	producer, err := net.Dial("tcp", "localhost:1123")
+	producer, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", ports[0]))
 	if err != nil {
 		t.Fatal("could not connect to producer server: ", err)
 	}
 	defer producer.Close()
 
-	consumer, err := net.Dial("tcp", "localhost:1124")
+	consumer, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", ports[1]))
 	if err != nil {
 		t.Fatal("could not connect to consumer server: ", err)
 	}
@@ -63,51 +96,82 @@ func TestBalancerStart(t *testing.T) {
 	assert.Equal(t, "hello world\n", line)
 }
 
-// nolint: paralleltest
+func consume(t *testing.T, port int, inputs chan string, wg *sync.WaitGroup) {
+	t.Helper()
+
+	consumer, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		t.Error("could not connect to consumer server: ", err)
+	}
+
+	defer func() {
+		consumer.Close()
+		wg.Done()
+	}()
+
+	for {
+		reader := bufio.NewReader(consumer)
+
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			assert.Equal(t, "EOF", err.Error())
+
+			return
+		}
+
+		inputs <- line
+	}
+}
+
 func TestManyConsumersOneProducer(t *testing.T) {
-	b := balancer.New("tcp", ":1125", "tcp", ":1126")
+	t.Parallel()
+
+	const (
+		CONSUMER int = 10
+		MESSAGES int = 100
+	)
+
+	ports, _ := getFreePorts(2)
+
+	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]))
 
 	go b.Start()
 
 	time.Sleep(time.Second)
 
-	producer, err := net.Dial("tcp", "localhost:1125")
+	producer, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", ports[0]))
 	if err != nil {
 		t.Fatal("could not connect to producer server: ", err)
 	}
 	defer producer.Close()
 
-	const CONSUMER int = 10
-
 	inputs := make(chan string, 1)
 
+	var wg sync.WaitGroup
+
+	wg.Add(CONSUMER)
+
 	for i := 0; i < CONSUMER; i++ {
-		go func() {
-			consumer, err := net.Dial("tcp", "localhost:1126")
-			if err != nil {
-				t.Error("could not connect to consumer server: ", err)
-			}
-			defer consumer.Close()
-
-			reader := bufio.NewReader(consumer)
-
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				t.Error("could not read in consumer stream", err)
-
-				return
-			}
-
-			inputs <- line
-		}()
+		go consume(t, ports[1], inputs, &wg)
 	}
 
-	_, err = producer.Write([]byte("hello world\n"))
+	go func() {
+		for i := 0; i < CONSUMER*MESSAGES; i++ {
+			line := <-inputs
 
-	if err != nil {
-		t.Fatal("could not write in producer stream", err)
+			assert.Equal(t, "hello world\n", line)
+		}
+	}()
+
+	for i := 0; i < CONSUMER*MESSAGES; i++ {
+		_, err = producer.Write([]byte("hello world\n"))
+		if err != nil {
+			t.Fatal("could not write in producer stream", err)
+		}
 	}
 
-	line := <-inputs
-	assert.Equal(t, "hello world\n", line)
+	time.Sleep(time.Second)
+	producer.Close()
+
+	wg.Wait()
 }

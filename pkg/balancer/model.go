@@ -20,26 +20,10 @@ package balancer
 import (
 	"bufio"
 	"net"
+	"sync"
 
 	"github.com/rs/zerolog/log"
 )
-
-type ListenerFactory func() Listener
-
-type Connexion interface{}
-
-type Balancer struct {
-	producerNetwork string
-	producerAddress string
-	consumerNetwork string
-	consumerAddress string
-}
-
-// New Balancer service.
-func New(producerNetwork string, producerAddress string,
-	consumerNetwork string, consumerAddress string) *Balancer {
-	return &Balancer{producerNetwork, producerAddress, consumerNetwork, consumerAddress}
-}
 
 type Event int
 
@@ -47,10 +31,12 @@ const (
 	ProducerListenerReady Event = iota
 	NewProducer
 	ProducerClose
+	LastProducerClose
 
 	ConsumerListenerReady
 	NewConsumer
 	ConsumerClose
+	LastConsumerClose
 )
 
 type State int
@@ -59,7 +45,12 @@ const (
 	Initial State = iota
 	ProducerReady
 	ConsumerReady
-	ProducerAndConsumerReady
+	NoConsumerAndNoProducer
+	ConsumerAwaiting
+	ProducerAwaiting
+	ConsumerAndProcuder
+	ConsumerCloseFirst
+	ProducerCloseFirst
 )
 
 type StateEvent struct {
@@ -67,33 +58,141 @@ type StateEvent struct {
 	event Event
 }
 
-func update(state State, event Event) State {
+func updateClients(event Event, consumers int, producers int) (newEvent Event, newConsumers int, newProducers int) {
+	newEvent = event
+	newConsumers = consumers
+	newProducers = producers
+
+	// nolint: exhaustive
+	switch event {
+	case NewConsumer:
+		newConsumers = consumers + 1
+	case NewProducer:
+		newProducers = producers + 1
+	case ConsumerClose:
+		newConsumers = consumers - 1
+		if newConsumers == 0 {
+			newEvent = LastConsumerClose
+		}
+	case ProducerClose:
+		newProducers = producers - 1
+		if newProducers == 0 {
+			newEvent = LastProducerClose
+		}
+
+	default:
+	}
+
+	return newEvent, newConsumers, newProducers
+}
+
+// nolint: cyclop
+func update(
+	state State, event Event,
+) (
+	newState State,
+) {
 	switch (StateEvent{state: state, event: event}) {
 	case StateEvent{state: Initial, event: ConsumerListenerReady}:
-		return ConsumerReady
+		newState = ConsumerReady
 
 	case StateEvent{state: Initial, event: ProducerListenerReady}:
-		return ProducerReady
+		newState = ProducerReady
 
 	case StateEvent{state: ConsumerReady, event: ProducerListenerReady}:
-		return ProducerAndConsumerReady
+		newState = NoConsumerAndNoProducer
 	case StateEvent{state: ProducerReady, event: ConsumerListenerReady}:
-		return ProducerAndConsumerReady
+		newState = NoConsumerAndNoProducer
 
+	case StateEvent{state: NoConsumerAndNoProducer, event: NewConsumer}:
+		newState = ConsumerAwaiting
+	case StateEvent{state: ConsumerAwaiting, event: NewProducer}:
+		newState = ConsumerAndProcuder
+
+	case StateEvent{state: NoConsumerAndNoProducer, event: NewProducer}:
+		newState = ProducerAwaiting
+	case StateEvent{state: ProducerAwaiting, event: NewConsumer}:
+		newState = ConsumerAndProcuder
+
+	case StateEvent{state: ConsumerAndProcuder, event: LastConsumerClose}:
+		newState = ConsumerCloseFirst
+	case StateEvent{state: ConsumerCloseFirst, event: LastProducerClose}:
+		newState = NoConsumerAndNoProducer
+
+	case StateEvent{state: ConsumerAndProcuder, event: LastProducerClose}:
+		newState = ProducerCloseFirst
+	case StateEvent{state: ProducerCloseFirst, event: LastConsumerClose}:
+		newState = NoConsumerAndNoProducer
 	default:
 		log.Logger.Info().Int("state", int(state)).Int("event", int(event)).Msg("Unknow state and event action")
 
-		return state
+		newState = state
 	}
+
+	return newState
+}
+
+type Balancer struct {
+	producerNetwork string
+	producerAddress string
+	consumerNetwork string
+	consumerAddress string
+	ch              *ConsumerHandler
+	ph              *ProducerHandler
+	stream          chan []byte
+	quit            chan struct{}
+}
+
+// New Balancer service.
+func New(producerNetwork string, producerAddress string,
+	consumerNetwork string, consumerAddress string) *Balancer {
+	return &Balancer{
+		producerNetwork,
+		producerAddress,
+		consumerNetwork,
+		consumerAddress,
+		// nolint: exhaustivestruct
+		&ConsumerHandler{},
+		// nolint: exhaustivestruct
+		&ProducerHandler{},
+		make(chan []byte, 1),
+		make(chan struct{}, 1),
+	}
+}
+
+func (b Balancer) action(state State) {
+	// nolint: exhaustive
+	switch state {
+	case NoConsumerAndNoProducer:
+		b.resetSession()
+	case ProducerCloseFirst:
+		b.closeStream()
+	}
+}
+
+func (b Balancer) resetSession() {
+	b.stream = make(chan []byte, 1)
+	b.ph.setStream(b.stream)
+	b.ch.setStream(b.stream)
+	log.Logger.Info().Msg("Session start to a new stream")
+}
+
+func (b Balancer) closeStream() {
+	close(b.stream)
+	close(b.ph.getStream())
+	log.Logger.Info().Interface("stream", b.stream).Msg("Close current Stream")
 }
 
 // Start the balancer Service and wait for clients.
 func (b Balancer) Start() {
-	stream := make(chan []byte, 1)
 	events := make(chan Event, 1)
 
+	b.ph = NewProducerHandler(events, b.quit)
+
+	b.ch = NewConsumerHandler(events, b.quit)
+
 	producer := NewListenerFactory(
-		NewProducerHandler(stream, events),
+		b.ph,
 		b.producerNetwork,
 		b.producerAddress,
 		func() { events <- ProducerListenerReady },
@@ -104,7 +203,7 @@ func (b Balancer) Start() {
 	go producer.Start()
 
 	consumer := NewListenerFactory(
-		NewConsumerHandler(stream, events),
+		b.ch,
 		b.consumerNetwork, b.consumerAddress,
 		func() { events <- ConsumerListenerReady },
 	)
@@ -114,9 +213,27 @@ func (b Balancer) Start() {
 	go consumer.Start()
 
 	state := Initial
+	consumers := 0
+	producers := 0
 
 	for event := range events {
-		state = update(state, event)
+		log.Info().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
+		event, consumers, producers = updateClients(event, consumers, producers)
+
+		log.Info().
+			Int("consumers", consumers).
+			Int("producers", producers).
+			Int("computedEvent", int(event)).
+			Msg("consumers producer stats")
+
+		newState := update(state, event)
+
+		if newState != state {
+			b.action(newState)
+			state = newState
+		}
+
+		log.Info().Int("state", int(state)).Msg("End update")
 	}
 }
 
@@ -159,26 +276,21 @@ func (l Listener) Start() {
 	}
 }
 
-type ProducerHandler struct {
-	stream chan<- []byte
+type ProducerWorker struct {
+	conn   net.Conn
+	stream chan []byte
 	events chan<- Event
+	quit   <-chan struct{}
 }
 
-func NewProducerHandler(stream chan<- []byte, events chan<- Event) ProducerHandler {
-	return ProducerHandler{stream, events}
-}
-
-func (ph ProducerHandler) handleRequest(conn net.Conn) {
-	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New Producer")
-	ph.events <- NewProducer
-
+func (w *ProducerWorker) Start() {
 	defer func() {
-		conn.Close()
-		log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("Producer close connection")
-		ph.events <- ProducerClose
+		w.conn.Close()
+		log.Info().IPAddr("remote", net.IP(w.conn.RemoteAddr().Network())).Msg("Producer close connection")
+		w.events <- ProducerClose
 	}()
 
-	reader := bufio.NewReader(conn)
+	reader := bufio.NewReader(w.conn)
 
 	for {
 		line, err := reader.ReadBytes(byte('\n'))
@@ -187,35 +299,119 @@ func (ph ProducerHandler) handleRequest(conn net.Conn) {
 
 			break
 		}
-		ph.stream <- line
+
+		w.stream <- line
+	}
+}
+
+type ProducerHandler struct {
+	sync.Mutex
+	events chan<- Event
+	stream chan []byte
+	quit   <-chan struct{}
+}
+
+func NewProducerHandler(events chan<- Event, quit <-chan struct{}) *ProducerHandler {
+	// nolint: exhaustivestruct
+	return &ProducerHandler{events: events, quit: quit}
+}
+
+func (ph *ProducerHandler) handleRequest(conn net.Conn) {
+	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New Producer")
+	ph.Lock()
+	ph.events <- NewProducer
+
+	worker := ProducerWorker{conn: conn, stream: ph.stream, events: ph.events, quit: ph.quit}
+	ph.Unlock()
+	worker.Start()
+}
+
+func (ph *ProducerHandler) setStream(stream chan []byte) {
+	ph.Lock()
+	defer ph.Unlock()
+	ph.stream = stream
+
+	log.Info().Msg("New stream for producers")
+}
+
+func (ph *ProducerHandler) getStream() chan []byte {
+	ph.Lock()
+	defer ph.Unlock()
+
+	log.Info().Msg("Get current consumers stream")
+
+	return ph.stream
+}
+
+type ConsumerWorker struct {
+	conn   net.Conn
+	stream chan []byte
+	events chan<- Event
+	quit   <-chan struct{}
+}
+
+func (w *ConsumerWorker) Start() {
+	defer func() {
+		w.conn.Close()
+		log.Info().IPAddr("remote", net.IP(w.conn.RemoteAddr().Network())).Msg("Consumer close connection")
+		w.events <- ConsumerClose
+	}()
+
+	for {
+		select {
+		case line, ok := <-w.stream:
+			if !ok {
+				log.Info().IPAddr("remote", net.IP(w.conn.RemoteAddr().String())).Msg("End of stream")
+
+				return
+			}
+
+			_, err := w.conn.Write(line)
+			if err != nil {
+				log.Err(err)
+
+				return
+			}
+		case <-w.quit:
+			return
+		}
 	}
 }
 
 type ConsumerHandler struct {
-	stream <-chan []byte
+	sync.Mutex
 	events chan<- Event
+	stream chan []byte
+	quit   <-chan struct{}
 }
 
-func NewConsumerHandler(stream <-chan []byte, events chan<- Event) ConsumerHandler {
-	return ConsumerHandler{stream, events}
+func NewConsumerHandler(events chan<- Event, quit <-chan struct{}) *ConsumerHandler {
+	// nolint: exhaustivestruct
+	return &ConsumerHandler{events: events, quit: quit}
 }
 
-func (ch ConsumerHandler) handleRequest(conn net.Conn) {
+func (ch *ConsumerHandler) setStream(stream chan []byte) {
+	ch.Lock()
+	defer ch.Unlock()
+	ch.stream = stream
+
+	log.Info().Msg("New stream for consumer")
+}
+
+func (ch *ConsumerHandler) getStream() chan []byte {
+	ch.Lock()
+	defer ch.Unlock()
+
+	log.Info().Msg("Get Current Consumer stream")
+
+	return ch.stream
+}
+
+func (ch *ConsumerHandler) handleRequest(conn net.Conn) {
 	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New consumer")
 	ch.events <- NewConsumer
 
-	defer func() {
-		conn.Close()
-		log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("Consumer close connection")
-		ch.events <- ConsumerClose
-	}()
+	worker := ConsumerWorker{conn: conn, stream: ch.getStream(), events: ch.events, quit: ch.quit}
 
-	for line := range ch.stream {
-		_, err := conn.Write(line)
-		if err != nil {
-			log.Err(err)
-
-			break
-		}
-	}
+	worker.Start()
 }
