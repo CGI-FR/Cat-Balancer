@@ -18,11 +18,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/cgi-fr/cat-balancer/pkg/balancer"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
 )
 
 // Provisioned by ldflags
@@ -39,6 +41,27 @@ func main() {
 	// nolint: exhaustivestruct
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
+	// nolint: exhaustivestruct
+	rootCmd := &cobra.Command{
+		Use:   "cb",
+		Short: "Cat Balancer : line based load balancer for net cat",
+		Version: fmt.Sprintf(`%v (commit=%v date=%v by=%v)
+Copyright (C) 2021 CGI France
+License GPLv3: GNU GPL version 3 <https://gnu.org/licenses/gpl.html>.
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDate, builtBy),
+		Run: func(cmd *cobra.Command, args []string) {
+			run()
+		},
+	}
+
+	if err := rootCmd.Execute(); err != nil {
+		log.Err(err).Msg("Error when executing command")
+		os.Exit(1)
+	}
+}
+
+func run() {
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
 	log.Info().Msgf("%v %v (commit=%v date=%v by=%v)", name, version, commit, buildDate, builtBy)
