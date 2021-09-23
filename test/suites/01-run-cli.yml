@@ -8,9 +8,9 @@ testcases:
       - script: |
             cb & \
             sleep 1 && \
-            nc localhost:1124 < /dev/null  > /tmp/ts & \
+            nc localhost:1961 < /dev/null  > /tmp/ts & \
             sleep 1 && \
-            echo "Hello World" | nc localhost:1123 && \
+            echo "Hello World" | nc localhost:1691 && \
             sleep 1 && \
             killall cb 
         assertions:
@@ -26,13 +26,12 @@ testcases:
     steps:
       - script: rm -f /tmp/ts
       - script: |
-            cb & \
-            sleep 1 && \
-            echo "Hello World" | nc localhost:1123 & \
-            sleep 1 && \
-            nc localhost:1124 < /dev/null  > /tmp/ts & \
-            sleep 1 && \
-            killall cb
+          cb -v5 & \
+          sleep 1 && \
+          echo $(sleep 2 ; echo "Hello World") | nc localhost:1691 && \
+          nc localhost:1961 < /dev/null  > /tmp/ts & \
+          sleep 3 && \
+          killall cb
         assertions:
           - result.systemerr ShouldContainSubstring Starting Producer Server
           - result.code ShouldEqual 0
@@ -48,9 +47,9 @@ testcases:
       - script: |
             cb & \
             sleep 1 && \
-            yes "Hello World" | head -n 100000 | nc localhost:1123 & \
+            yes "Hello World" | head -n 100000 | nc localhost:1691 & \
             sleep 1 && \
-            nc localhost:1124 < /dev/null  | md5sum -  && \
+            nc localhost:1961 < /dev/null  | md5sum -  && \
             killall cb
         assertions:
           # result of yes "Hello World" | head -n 100000 | md5sum -

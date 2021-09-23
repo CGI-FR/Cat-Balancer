@@ -41,6 +41,12 @@ func main() {
 	// nolint: exhaustivestruct
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
+	var (
+		producerPort int
+		consumerPort int
+		verbosity    string
+	)
+
 	// nolint: exhaustivestruct
 	rootCmd := &cobra.Command{
 		Use:   "cb",
@@ -51,9 +57,38 @@ License GPLv3: GNU GPL version 3 <https://gnu.org/licenses/gpl.html>.
 This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDate, builtBy),
 		Run: func(cmd *cobra.Command, args []string) {
-			run()
+			switch verbosity {
+			case "trace", "5":
+				zerolog.SetGlobalLevel(zerolog.TraceLevel)
+				log.Info().Msg("Logger level set to trace")
+			case "debug", "4":
+				zerolog.SetGlobalLevel(zerolog.DebugLevel)
+				log.Info().Msg("Logger level set to debug")
+			case "info", "3":
+				zerolog.SetGlobalLevel(zerolog.InfoLevel)
+				log.Info().Msg("Logger level set to info")
+			case "warn", "2":
+				zerolog.SetGlobalLevel(zerolog.WarnLevel)
+			case "error", "1":
+				zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+			default:
+				zerolog.SetGlobalLevel(zerolog.Disabled)
+			}
+
+			run(producerPort, consumerPort)
 		},
 	}
+	// nolint: gomnd
+	rootCmd.PersistentFlags().IntVarP(&producerPort, "producer-port", "p", 1691, "producer listen port")
+	// nolint: gomnd
+	rootCmd.PersistentFlags().IntVarP(&consumerPort, "consumer-port", "c", 1961, "consumer listen port")
+	rootCmd.PersistentFlags().
+		StringVarP(&verbosity,
+			"verbosity",
+			"v",
+			"info",
+			"set level of log verbosity : none (0), error (1), warn (2), info (3), debug (4), trace (5)",
+		)
 
 	if err := rootCmd.Execute(); err != nil {
 		log.Err(err).Msg("Error when executing command")
@@ -61,10 +96,8 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 	}
 }
 
-func run() {
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-
+func run(producerPort int, consumerPort int) {
 	log.Info().Msgf("%v %v (commit=%v date=%v by=%v)", name, version, commit, buildDate, builtBy)
 
-	balancer.New("tcp", ":1123", "tcp", ":1124").Start()
+	balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort)).Start()
 }
