@@ -124,7 +124,7 @@ func update(
 	case StateEvent{state: ProducerCloseFirst, event: LastConsumerClose}:
 		newState = NoConsumerAndNoProducer
 	default:
-		log.Logger.Info().Int("state", int(state)).Int("event", int(event)).Msg("Unknow state and event action")
+		log.Logger.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Unknow state and event action")
 
 		newState = state
 	}
@@ -173,7 +173,7 @@ func (b *Balancer) action(state State) {
 func (b *Balancer) resetSession() {
 	b.stream = make(chan []byte, 1)
 
-	log.Logger.Info().Msg("Session start to a new stream")
+	log.Logger.Info().Msg("Start to a new stream")
 
 	b.Unlock()
 	log.Debug().Msg("Unlock")
@@ -181,9 +181,10 @@ func (b *Balancer) resetSession() {
 
 func (b *Balancer) closeStream() {
 	log.Debug().Msg("Lock")
+	log.Info().Msg("Drain current stream")
 	b.Lock()
 	close(b.stream)
-	log.Logger.Info().Interface("stream", b.stream).Msg("Close current Stream")
+	log.Debug().Msg("Close current Stream")
 }
 
 // Start the balancer Service and wait for clients.
@@ -222,10 +223,10 @@ func (b *Balancer) Start() {
 	producers := 0
 
 	for event := range events {
-		log.Info().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
+		log.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
 		event, consumers, producers = updateClients(event, consumers, producers)
 
-		log.Info().
+		log.Debug().
 			Int("consumers", consumers).
 			Int("producers", producers).
 			Int("computedEvent", int(event)).
@@ -238,7 +239,7 @@ func (b *Balancer) Start() {
 			state = newState
 		}
 
-		log.Info().Int("state", int(state)).Msg("End update")
+		log.Debug().Int("state", int(state)).Msg("End update")
 	}
 }
 
@@ -248,7 +249,7 @@ func (b *Balancer) getStream() chan []byte {
 	b.RLock()
 	defer b.RUnlock()
 
-	log.Info().Msg("Get Current stream")
+	log.Debug().Msg("Get Current stream")
 	log.Debug().Msg("RUnLock")
 
 	return b.stream
@@ -303,7 +304,7 @@ type ProducerWorker struct {
 func (w *ProducerWorker) Start() {
 	defer func() {
 		w.conn.Close()
-		log.Info().IPAddr("remote", net.IP(w.conn.RemoteAddr().Network())).Msg("Producer close connection")
+		log.Info().Str("remote", w.conn.RemoteAddr().String()).Msg("Producer close connection")
 		w.events <- ProducerClose
 	}()
 
@@ -332,7 +333,7 @@ func NewProducerHandler(balancer *Balancer, events chan<- Event, quit <-chan str
 }
 
 func (ph *ProducerHandler) handleRequest(conn net.Conn) {
-	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New Producer")
+	log.Info().Str("remote", conn.RemoteAddr().String()).Msg("New producer")
 	ph.events <- NewProducer
 
 	worker := ProducerWorker{conn: conn, stream: ph.balancer.getStream(), events: ph.events, quit: ph.quit}
@@ -349,7 +350,7 @@ type ConsumerWorker struct {
 func (w *ConsumerWorker) Start() {
 	defer func() {
 		w.conn.Close()
-		log.Info().IPAddr("remote", net.IP(w.conn.RemoteAddr().Network())).Msg("Consumer close connection")
+		log.Info().Str("remote", w.conn.RemoteAddr().String()).Msg("Consumer close connection")
 		w.events <- ConsumerClose
 	}()
 
@@ -357,7 +358,7 @@ func (w *ConsumerWorker) Start() {
 		select {
 		case line, ok := <-w.stream:
 			if !ok {
-				log.Info().IPAddr("remote", net.IP(w.conn.RemoteAddr().String())).Msg("End of stream")
+				log.Debug().Str("remote", w.conn.RemoteAddr().String()).Msg("End of stream")
 
 				return
 			}
@@ -385,7 +386,7 @@ func NewConsumerHandler(balancer *Balancer, events chan<- Event, quit <-chan str
 }
 
 func (ch *ConsumerHandler) handleRequest(conn net.Conn) {
-	log.Info().IPAddr("remote", net.IP(conn.RemoteAddr().Network())).Msg("New consumer")
+	log.Info().Str("remote", conn.RemoteAddr().String()).Msg("New consumer")
 	ch.events <- NewConsumer
 
 	worker := ConsumerWorker{conn: conn, stream: ch.balancer.getStream(), events: ch.events, quit: ch.quit}

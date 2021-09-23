@@ -39,6 +39,8 @@ func main() {
 	// nolint: exhaustivestruct
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+
 	log.Info().Msgf("%v %v (commit=%v date=%v by=%v)", name, version, commit, buildDate, builtBy)
 
 	balancer.New("tcp", ":1123", "tcp", ":1124").Start()
