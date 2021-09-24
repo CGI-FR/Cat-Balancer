@@ -128,7 +128,7 @@ func TestManyConsumersOneProducer(t *testing.T) {
 
 	const (
 		CONSUMER int = 10
-		MESSAGES int = 100
+		MESSAGES int = 10
 	)
 
 	ports, _ := getFreePorts(2)
