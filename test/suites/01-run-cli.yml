@@ -28,9 +28,9 @@ testcases:
       - script: |
           cb -v5 & \
           sleep 1 && \
-          echo $(sleep 2 ; echo "Hello World") | nc localhost:1691 && \
-          nc localhost:1961 < /dev/null  > /tmp/ts & \
-          sleep 3 && \
+          echo $(sleep 2 ; echo "Hello World") | nc localhost:1691 & \
+          sleep 1 && \
+          nc localhost:1961 < /dev/null  > /tmp/ts && \
           killall cb
         assertions:
           - result.systemerr ShouldContainSubstring Starting Producer Server
