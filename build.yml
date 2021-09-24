@@ -291,7 +291,7 @@ targets:
       - if: 'is_release == "yes"'
         then:
           - try:
-              - $: "# ={DOCKERHUB_USER}"
+              - $: "# ={DOCKERHUB_ORGANIZATION}"
                 3x: true
             catch:
               - print: |
@@ -309,11 +309,11 @@ targets:
                 if len(keycomponents) > 1 {
                   suffix = "-" + keycomponents[len(keycomponents)-1]
                 }
-              - $: "sudo docker tag ={DOCKERHUB_USER}/={project}={suffix}:={tag} ={DOCKERHUB_USER}/={project}={suffix}:v={version_major}"
-              - $: "sudo docker tag ={DOCKERHUB_USER}/={project}={suffix}:={tag} ={DOCKERHUB_USER}/={project}={suffix}:v={version_major}.={version_minor}"
+              - $: "sudo docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}"
+              - $: "sudo docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}"
               - if: "latest"
                 then:
-                  - $: "sudo docker tag ={DOCKERHUB_USER}/={project}={suffix}:={tag} ={DOCKERHUB_USER}/={project}={suffix}:latest"
+                  - $: "sudo docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:latest"
               - $: "sudo docker images --no-trunc | grep $(cat ={BUILD_DIR}/last-={key})"
         else:
           - print: "Skipping release target (not a release)"
@@ -349,12 +349,12 @@ targets:
                 if len(keycomponents) > 1 {
                   suffix = "-" + keycomponents[len(keycomponents)-1]
                 }
-              - $: "sudo docker push ={DOCKERHUB_USER}/={project}={suffix}:v={version_major}"
-              - $: "sudo docker push ={DOCKERHUB_USER}/={project}={suffix}:v={version_major}.={version_minor}"
-              - $: "sudo docker push ={DOCKERHUB_USER}/={project}={suffix}:v={version_major}.={version_minor}.={version_patch}"
+              - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}"
+              - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}"
+              - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}.={version_patch}"
               - if: "latest"
                 then:
-                  - $: "sudo docker push ={DOCKERHUB_USER}/={project}={suffix}:latest"
+                  - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:latest"
         else:
           - print: "Skipping release target (not a release)"
             color: red
