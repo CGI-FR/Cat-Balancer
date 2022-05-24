@@ -14,6 +14,10 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## [0.2.0] 2022-05-23
+
+- `Added` Cat Pipe client.
+
 ## [0.1.0] 2021-09-24
 
 - `Added` First official release.
