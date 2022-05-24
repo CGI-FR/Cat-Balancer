@@ -278,9 +278,9 @@ targets:
             if len(keycomponents) > 1 {
               suffix = "-" + keycomponents[len(keycomponents)-1]
             }
-          - $: "sudo docker build -q --iidfile ={BUILD_DIR}/last-={key} -t ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} -f ={key} ={dockerfiles[key]}"
+          - $: "docker build -q --iidfile ={BUILD_DIR}/last-={key} -t ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} -f ={key} ={dockerfiles[key]}"
             1x: true
-          - $: "sudo docker images --no-trunc | grep $(cat ={BUILD_DIR}/last-={key})"
+          - $: "docker images --no-trunc | grep $(cat ={BUILD_DIR}/last-={key})"
 
   # run "neon -props '{latest: true}' docker-tag" to include latest tag
   docker-tag:
@@ -309,12 +309,12 @@ targets:
                 if len(keycomponents) > 1 {
                   suffix = "-" + keycomponents[len(keycomponents)-1]
                 }
-              - $: "sudo docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}"
-              - $: "sudo docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}"
+              - $: "docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}"
+              - $: "docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}"
               - if: "latest"
                 then:
-                  - $: "sudo docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:latest"
-              - $: "sudo docker images --no-trunc | grep $(cat ={BUILD_DIR}/last-={key})"
+                  - $: "docker tag ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:={tag} ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:latest"
+              - $: "docker images --no-trunc | grep $(cat ={BUILD_DIR}/last-={key})"
         else:
           - print: "Skipping release target (not a release)"
             color: red
@@ -322,7 +322,7 @@ targets:
   docker-login:
     steps:
       - try:
-          - $: "sudo docker login -u ={DOCKERHUB_USER} -p ={DOCKERHUB_PASS}"
+          - $: "docker login -u ={DOCKERHUB_USER} -p ={DOCKERHUB_PASS}"
             2x: true
         catch:
           - print: |
@@ -349,12 +349,12 @@ targets:
                 if len(keycomponents) > 1 {
                   suffix = "-" + keycomponents[len(keycomponents)-1]
                 }
-              - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}"
-              - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}"
-              - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}.={version_patch}"
+              - $: "docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}"
+              - $: "docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}"
+              - $: "docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:v={version_major}.={version_minor}.={version_patch}"
               - if: "latest"
                 then:
-                  - $: "sudo docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:latest"
+                  - $: "docker push ={DOCKERHUB_ORGANIZATION}/={project}={suffix}:latest"
         else:
           - print: "Skipping release target (not a release)"
             color: red
