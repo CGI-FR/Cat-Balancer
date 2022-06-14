@@ -14,6 +14,10 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## [0.3.0] 2022-06-14
+
+- `Added` Cat Pipe retry to connect to a failed tcp stream every second at startup.
+
 ## [0.2.0] 2022-05-23
 
 - `Added` Cat Pipe client.

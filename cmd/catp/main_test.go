@@ -23,7 +23,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/cgi-fr/cat-balancer/pkg/balancer"
 	"github.com/spf13/cobra"
@@ -39,8 +38,6 @@ func Test_run(t *testing.T) {
 	t.Parallel()
 
 	go balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort)).Start()
-
-	time.Sleep(1 * time.Second)
 
 	wg := sync.WaitGroup{}
 

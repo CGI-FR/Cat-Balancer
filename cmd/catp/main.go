@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -105,23 +106,35 @@ func run(cmd *cobra.Command, in string, out string) error {
 	streamOut := cmd.OutOrStdout()
 
 	if in != "" {
-		conIn, err := net.Dial("tcp", in)
-		if err != nil {
-			return fmt.Errorf("%w", err)
-		}
-		defer conIn.Close()
+		for {
+			conIn, err := net.Dial("tcp", in)
+			if err == nil {
+				defer conIn.Close()
 
-		streamIn = conIn
+				streamIn = conIn
+
+				break
+			}
+
+			log.Warn().Err(err).Msg("input tcp stream failed to connect")
+			time.Sleep(time.Second)
+		}
 	}
 
 	if out != "" {
-		conOut, err := net.Dial("tcp", out)
-		if err != nil {
-			return fmt.Errorf("%w", err)
-		}
-		defer conOut.Close()
+		for {
+			conOut, err := net.Dial("tcp", out)
+			if err == nil {
+				defer conOut.Close()
 
-		streamOut = conOut
+				streamOut = conOut
+
+				break
+			}
+
+			log.Warn().Err(err).Msg("output tcp stream failed to connect")
+			time.Sleep(time.Second)
+		}
 	}
 
 	_, err := io.Copy(streamOut, streamIn)
