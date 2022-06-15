@@ -51,6 +51,8 @@ const (
 	ConsumerAndProcuder
 	ConsumerCloseFirst
 	ProducerCloseFirst
+	ConsumerAwaitingAndCloseFirst
+	ProducerAwaitingAndCloseFirst
 )
 
 type StateEvent struct {
@@ -123,8 +125,19 @@ func update(
 		newState = ProducerCloseFirst
 	case StateEvent{state: ProducerCloseFirst, event: LastConsumerClose}:
 		newState = NoConsumerAndNoProducer
+
+	case StateEvent{state: ProducerAwaiting, event: LastProducerClose}:
+		newState = ProducerAwaitingAndCloseFirst
+	case StateEvent{state: ProducerAwaitingAndCloseFirst, event: NewConsumer}:
+		newState = ProducerCloseFirst
+
+	case StateEvent{state: ConsumerAwaiting, event: LastProducerClose}:
+		newState = ConsumerAwaitingAndCloseFirst
+	case StateEvent{state: ConsumerAwaitingAndCloseFirst, event: NewProducer}:
+		newState = ConsumerCloseFirst
+
 	default:
-		log.Logger.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Unknow state and event action")
+		log.Logger.Warn().Int("state", int(state)).Int("event", int(event)).Msg("Unknow state and event action")
 
 		newState = state
 	}
