@@ -20,6 +20,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -29,12 +30,43 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const (
-	producerPort = 1691
-	consumerPort = 1961
-)
+// GetFreePorts return free port.
+func GetFreePorts(n int) ([]int, error) {
+	ports := make([]int, n)
+
+	for k := range ports {
+		addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+		if err != nil {
+			// nolint: wrapcheck
+			return ports, err
+		}
+
+		l, err := net.ListenTCP("tcp", addr)
+		if err != nil {
+			// nolint: wrapcheck
+			return ports, err
+		}
+		// This is done on purpose - we want to keep ports
+		// busy to avoid collisions when getting the next one
+		defer func() { _ = l.Close() }()
+
+		ports[k] = l.Addr().(*net.TCPAddr).Port
+	}
+
+	return ports, nil
+}
 
 func Test_run(t *testing.T) {
+	ports, err := GetFreePorts(2)
+	if err != nil {
+		t.Error(err)
+	}
+
+	var (
+		producerPort = ports[0]
+		consumerPort = ports[1]
+	)
+
 	t.Parallel()
 
 	go balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort)).Start()
@@ -49,7 +81,7 @@ func Test_run(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetIn(reader)
 
-		err := run(cmd, "", "127.0.0.1:1691")
+		err := run(cmd, "", fmt.Sprintf("127.0.0.1:%d", producerPort))
 
 		assert.Nil(t, err)
 		wg.Done()
@@ -63,11 +95,45 @@ func Test_run(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&writer)
 
-		err := run(cmd, "127.0.0.1:1961", "")
+		err := run(cmd, fmt.Sprintf("127.0.0.1:%d", consumerPort), "")
 		assert.Nil(t, err)
 		assert.Equal(t, "hello\n", writer.String())
 		wg.Done()
 	}()
 
 	wg.Wait()
+}
+
+func Test_run_producer_first(t *testing.T) {
+	ports, err := GetFreePorts(2)
+	if err != nil {
+		t.Error(err)
+	}
+
+	var (
+		producerPort = ports[0]
+		consumerPort = ports[1]
+	)
+
+	t.Parallel()
+
+	go balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort)).Start()
+
+	reader := strings.NewReader("hello\n")
+	// nolint: exhaustivestruct
+	cmd := &cobra.Command{}
+	cmd.SetIn(reader)
+
+	err = run(cmd, "", fmt.Sprintf("127.0.0.1:%d", producerPort))
+
+	assert.Nil(t, err)
+
+	writer := strings.Builder{}
+	// nolint: exhaustivestruct
+	cmd = &cobra.Command{}
+	cmd.SetOut(&writer)
+
+	err = run(cmd, fmt.Sprintf("127.0.0.1:%d", consumerPort), "")
+	assert.Nil(t, err)
+	assert.Equal(t, "hello\n", writer.String())
 }

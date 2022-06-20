@@ -17,6 +17,7 @@ Types of changes
 ## [0.3.0] 2022-06-14
 
 - `Added` Cat Pipe retry to connect to a failed tcp stream every second at startup.
+- `Fixed` Fix blocking state when producer close before consumer connect.
 
 ## [0.2.0] 2022-05-23
 

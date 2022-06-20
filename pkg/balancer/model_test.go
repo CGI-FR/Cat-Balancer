@@ -29,7 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func getFreePorts(n int) ([]int, error) {
+// GetFreePorts return free port.
+func GetFreePorts(n int) ([]int, error) {
 	ports := make([]int, n)
 
 	for k := range ports {
@@ -57,7 +58,7 @@ func getFreePorts(n int) ([]int, error) {
 func TestBalancerStart(t *testing.T) {
 	t.Parallel()
 
-	ports, err := getFreePorts(2)
+	ports, err := GetFreePorts(2)
 	if err != nil {
 		t.Error(err)
 	}
@@ -131,7 +132,7 @@ func TestManyConsumersOneProducer(t *testing.T) {
 		MESSAGES int = 10
 	)
 
-	ports, _ := getFreePorts(2)
+	ports, _ := GetFreePorts(2)
 
 	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]))
 
