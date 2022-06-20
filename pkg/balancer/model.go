@@ -17,6 +17,41 @@
 
 package balancer
 
+//
+//                                           ,-------.
+//                                           |Initial|
+//                                      +----|-------|---+
+//                ProducerListenerReady |    `-------'   | ConsumerListenerReady
+//                                      v                v
+//                               ,-------------.   ,-------------.
+//                               |ProducerReady|   |ConsumerReady|
+//                               |-------------|   |-------------|
+//                               `-------------'   `-------------'
+//                ConsumerListenerReady |                | ProducerListenerReady
+//                                      v                v
+//                                   ,-----------------------.
+//                 LastProducerClose |NoConsumerAndNoProducer| LastConsumerClose
+// +-------------------------------->|-----------------------|<----------------------------------+
+// |                                 `-----------------------'                                   |
+// |                       NewConsumer |                 | NewProducer                           |
+// |                                   v                 v                                       |
+// |                          ,----------------.   ,----------------.                            |
+// |                          |ConsumerAwaiting|   |ProducerAwaiting|                            |
+// |                          |----------------|   |----------------|                            |
+// |                          `----------------'   `----------------'                            |
+// |          LastProducerClose |  NewPro. |           | NewCons. | LastConsumerClose            |
+// |                            v          v           v          v                              |
+// | ,-----------------------------.   ,-------------------.   ,-----------------------------.   |
+// | |ConsumerAwaitingAndCloseFirst|   |ConsumerAndProcuder|   |ProducerAwaitingAndCloseFirst|   |
+// | |-----------------------------|   |-------------------|   |-----------------------------|   |
+// | `-----------------------------'   `-------------------'   `-----------------------------'   |
+// |     NewProducer |                    |           |                        | NewConsumer     |
+// |                 v  LastConsumerClose |           | LastProducerClose      v                 |
+// |       ,------------------.           |           |              ,------------------.        |
+// |       |ConsumerCloseFirst|           |           |              |ProducerCloseFirst|        |
+// +-------|------------------|<----------+           +------------->|------------------|--------+
+//         `------------------'                                      `------------------'
+
 import (
 	"bufio"
 	"net"
