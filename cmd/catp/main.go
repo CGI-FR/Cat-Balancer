@@ -24,6 +24,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cgi-fr/cat-balancer/pkg/catp"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -44,9 +45,11 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	var (
-		inAdrress  string
-		outAddress string
-		verbosity  string
+		inAdrress     string
+		outAddress    string
+		captureStderr string
+		captureStdout string
+		verbosity     string
 	)
 
 	// nolint: exhaustivestruct
@@ -61,25 +64,15 @@ This is free software: you are free to change and redistribute it.
 There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDate, builtBy),
 
 		RunE: func(cmd *cobra.Command, args []string) error {
-			switch verbosity {
-			case "trace", "5":
-				zerolog.SetGlobalLevel(zerolog.TraceLevel)
-				log.Info().Msg("Logger level set to trace")
-			case "debug", "4":
-				zerolog.SetGlobalLevel(zerolog.DebugLevel)
-				log.Info().Msg("Logger level set to debug")
-			case "info", "3":
-				zerolog.SetGlobalLevel(zerolog.InfoLevel)
-				log.Info().Msg("Logger level set to info")
-			case "warn", "2":
-				zerolog.SetGlobalLevel(zerolog.WarnLevel)
-			case "error", "1":
-				zerolog.SetGlobalLevel(zerolog.ErrorLevel)
-			default:
-				zerolog.SetGlobalLevel(zerolog.Disabled)
+			initLog(verbosity)
+
+			command := []string{}
+
+			if cmd.ArgsLenAtDash() > -1 {
+				command = args[cmd.ArgsLenAtDash():]
 			}
 
-			return run(cmd, inAdrress, outAddress)
+			return run(cmd, inAdrress, outAddress, command, captureStderr, captureStdout)
 		},
 	}
 
@@ -87,6 +80,10 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 		"input server's address (empty for stdin by default)")
 	rootCmd.PersistentFlags().StringVarP(&outAddress, "out", "o", "",
 		"output server's address (empty for stdout by default)")
+	rootCmd.PersistentFlags().StringVarP(&captureStderr, "save-stderr", "E", "",
+		"capture stderr output into a file")
+	rootCmd.PersistentFlags().StringVarP(&captureStdout, "save-stdout", "O", "",
+		"capture stdout output into a file")
 	rootCmd.PersistentFlags().
 		StringVarP(&verbosity,
 			"verbosity",
@@ -101,43 +98,83 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 	}
 }
 
-func run(cmd *cobra.Command, in string, out string) error {
+func initLog(verbosity string) {
+	switch verbosity {
+	case "trace", "5":
+		zerolog.SetGlobalLevel(zerolog.TraceLevel)
+		log.Info().Msg("Logger level set to trace")
+	case "debug", "4":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+		log.Info().Msg("Logger level set to debug")
+	case "info", "3":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+		log.Info().Msg("Logger level set to info")
+	case "warn", "2":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error", "1":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.Disabled)
+	}
+}
+
+// openTCP try to open tcp stream every second until success.
+func openTCP(addr string) io.ReadWriteCloser {
+	for {
+		conIn, err := net.Dial("tcp", addr)
+		if err == nil {
+			return conIn
+		}
+
+		log.Warn().Err(err).Msg("tcp stream failed to connect")
+		time.Sleep(time.Second)
+	}
+}
+
+func run(
+	cmd *cobra.Command,
+	in string, out string,
+	command []string,
+	captureStderr string, captureStdout string,
+) error {
 	streamIn := cmd.InOrStdin()
 	streamOut := cmd.OutOrStdout()
 
 	if in != "" {
-		for {
-			conIn, err := net.Dial("tcp", in)
-			if err == nil {
-				defer conIn.Close()
-
-				streamIn = conIn
-
-				break
-			}
-
-			log.Warn().Err(err).Msg("input tcp stream failed to connect")
-			time.Sleep(time.Second)
-		}
+		conIn := openTCP(in)
+		defer conIn.Close()
+		streamIn = conIn
 	}
 
 	if out != "" {
-		for {
-			conOut, err := net.Dial("tcp", out)
-			if err == nil {
-				defer conOut.Close()
-
-				streamOut = conOut
-
-				break
-			}
-
-			log.Warn().Err(err).Msg("output tcp stream failed to connect")
-			time.Sleep(time.Second)
-		}
+		conOut := openTCP(out)
+		defer conOut.Close()
+		streamOut = conOut
 	}
 
-	_, err := io.Copy(streamOut, streamIn)
+	streamCaptureStderr := cmd.ErrOrStderr()
+
+	if captureStderr != "" {
+		captureFile, err := os.Create(captureStderr)
+		if err != nil {
+			return fmt.Errorf("%w", err)
+		}
+		defer captureFile.Close()
+
+		streamCaptureStderr = io.MultiWriter(captureFile, cmd.ErrOrStderr())
+	}
+
+	if captureStdout != "" {
+		captureFile, err := os.Create(captureStdout)
+		if err != nil {
+			return fmt.Errorf("%w", err)
+		}
+		defer captureFile.Close()
+
+		streamOut = io.MultiWriter(captureFile, streamOut)
+	}
+
+	err := catp.Start(command, streamIn, streamOut, streamCaptureStderr)
 	if err != nil {
 		return fmt.Errorf("%w", err)
 	}
