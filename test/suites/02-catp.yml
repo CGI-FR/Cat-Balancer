@@ -1,0 +1,58 @@
+# Venom Test Suite definition
+# Check Venom documentation for more information : https://github.com/ovh/venom
+name: run catp
+testcases:
+  - name: catp without options is like cat
+    steps:
+      - script: echo test | catp
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemerr ShouldContainSubstring info
+          - result.systemout ShouldEqual test
+
+  - name: catp with shell command is like a pipe cat
+    steps:
+      - script: echo test | catp -- sed 's/test/TEST/g'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemerr ShouldContainSubstring info
+          - result.systemout ShouldEqual TEST
+
+  - name: catp with shell command that failed should catch error
+    steps:
+      - script: yes test | catp -- sh -c 'exit 4'
+        assertions:
+          - result.code ShouldEqual 1
+          - result.systemerr ShouldContainSubstring exit status 4
+
+  - name: catp  with stderr flag should create a file that contains process's sterr
+    steps:
+      - script: rm -f stderr.txt
+      - script: echo test | catp --save-stderr stderr.txt -- sh -c 'echo 'error' 1>&2; sed s/test/TEST/g'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemerr ShouldContainSubstring info
+          - result.systemout ShouldEqual TEST
+          - result.systemerr ShouldContainSubstring error
+
+      - script: cat stderr.txt
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual error
+      - script: rm -f stderr.txt
+
+  - name: catp with stdout flag should create a file that contains process's stdout
+    steps:
+      - script: rm -f stdout.txt
+      - script: echo test | catp --save-stdout stdout.txt -- sh -c 'echo 'error' 1>&2; sed s/test/TEST/g'
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemerr ShouldContainSubstring info
+          - result.systemout ShouldEqual TEST
+          - result.systemerr ShouldContainSubstring error
+
+      - script: cat stdout.txt
+        assertions:
+          - result.code ShouldEqual 0
+          - result.systemout ShouldEqual TEST
+      - script: rm -f stdout.txt

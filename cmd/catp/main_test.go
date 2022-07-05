@@ -81,7 +81,7 @@ func Test_run(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetIn(reader)
 
-		err := run(cmd, "", fmt.Sprintf("127.0.0.1:%d", producerPort))
+		err := run(cmd, "", fmt.Sprintf("127.0.0.1:%d", producerPort), []string{}, "", "")
 
 		assert.Nil(t, err)
 		wg.Done()
@@ -95,7 +95,7 @@ func Test_run(t *testing.T) {
 		cmd := &cobra.Command{}
 		cmd.SetOut(&writer)
 
-		err := run(cmd, fmt.Sprintf("127.0.0.1:%d", consumerPort), "")
+		err := run(cmd, fmt.Sprintf("127.0.0.1:%d", consumerPort), "", []string{}, "", "")
 		assert.Nil(t, err)
 		assert.Equal(t, "hello\n", writer.String())
 		wg.Done()
@@ -124,7 +124,7 @@ func Test_run_producer_first(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetIn(reader)
 
-	err = run(cmd, "", fmt.Sprintf("127.0.0.1:%d", producerPort))
+	err = run(cmd, "", fmt.Sprintf("127.0.0.1:%d", producerPort), []string{}, "", "")
 
 	assert.Nil(t, err)
 
@@ -133,7 +133,7 @@ func Test_run_producer_first(t *testing.T) {
 	cmd = &cobra.Command{}
 	cmd.SetOut(&writer)
 
-	err = run(cmd, fmt.Sprintf("127.0.0.1:%d", consumerPort), "")
+	err = run(cmd, fmt.Sprintf("127.0.0.1:%d", consumerPort), "", []string{}, "", "")
 	assert.Nil(t, err)
 	assert.Equal(t, "hello\n", writer.String())
 }
