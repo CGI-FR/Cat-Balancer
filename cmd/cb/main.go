@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/cgi-fr/cat-balancer/pkg/balancer"
 	"github.com/rs/zerolog"
@@ -37,6 +38,7 @@ var (
 	builtBy   string
 )
 
+// nolint:  funlen
 func main() {
 	// nolint: exhaustivestruct
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
@@ -47,6 +49,7 @@ func main() {
 		verbosity        string
 		producerPoolSize int
 		consumerPoolSize int
+		interval         time.Duration
 	)
 
 	// nolint: exhaustivestruct
@@ -77,7 +80,7 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 				zerolog.SetGlobalLevel(zerolog.Disabled)
 			}
 
-			run(producerPort, consumerPort, producerPoolSize, consumerPoolSize)
+			run(producerPort, consumerPort, producerPoolSize, consumerPoolSize, interval)
 		},
 	}
 	// nolint: gomnd
@@ -86,6 +89,14 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 	rootCmd.PersistentFlags().IntVarP(&consumerPort, "consumer-port", "c", 1961, "consumer listen port")
 	rootCmd.PersistentFlags().IntVarP(&producerPoolSize, "producers-pool-size", "P", 0, "Producers expected")
 	rootCmd.PersistentFlags().IntVarP(&consumerPoolSize, "consumers-pool-size", "C", 0, "Consumers expected")
+	rootCmd.PersistentFlags().
+		DurationVarP(&interval,
+			"interval",
+			"i",
+			time.Second,
+			"Wait SEC seconds between updates. The default is to update every second.",
+		)
+
 	rootCmd.PersistentFlags().
 		StringVarP(&verbosity,
 			"verbosity",
@@ -100,11 +111,11 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 	}
 }
 
-func run(producerPort int, consumerPort int, producersPoolSize int, consumersPoolSize int) {
+func run(producerPort int, consumerPort int, producersPoolSize int, consumersPoolSize int, interval time.Duration) {
 	log.Info().Msgf("%v %v (commit=%v date=%v by=%v)", name, version, commit, buildDate, builtBy)
 
 	balancer.New(
 		"tcp", fmt.Sprintf(":%d", producerPort),
 		"tcp", fmt.Sprintf(":%d", consumerPort),
-		producersPoolSize, consumersPoolSize).Start()
+		producersPoolSize, consumersPoolSize, interval).Start()
 }

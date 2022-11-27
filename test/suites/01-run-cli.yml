@@ -74,21 +74,50 @@ testcases:
           # result of yes "Hello World" | head -n 1000 | md5sum -
           - result.systemout ShouldContainSubstring f094e7b2750a9559a021f877710c6709
           - result.code ShouldEqual 0
-# - name: two producers in a pool and one consumers
-#   steps:
-#     - script: rm -f /tmp/ts
-#     - script: |
-#         cb  --producers-pool-size 2 --consumers-pool-size 0& \
-#         sleep 1 && \
-#         yes "Hello World" | head -n 1000 | nc localhost:1691 && \
-#         nc localhost:1961 < /dev/null > /tmp/ts & \
-#         sleep 1 && \
-#         yes "Hello World" | head -n 1000 | nc localhost:1691 && \
-#         sleep 1&& \
-#         cat /tmp/ts | md5sum - &&
-#         killall cb
+  # - name: two producers in a pool and one consumers
+  #   steps:
+  #     - script: rm -f /tmp/ts
+  #     - script: |
+  #         cb  --producers-pool-size 2 --consumers-pool-size 0& \
+  #         sleep 1 && \
+  #         yes "Hello World" | head -n 1000 | nc localhost:1691 && \
+  #         nc localhost:1961 < /dev/null > /tmp/ts & \
+  #         sleep 1 && \
+  #         yes "Hello World" | head -n 1000 | nc localhost:1691 && \
+  #         sleep 1&& \
+  #         cat /tmp/ts | md5sum - &&
+  #         killall cb
 
-#       assertions:
-#         # result of yes "Hello World" | head -n 2000 | md5sum -
-#         - result.systemout ShouldContainSubstring c495dd848701a476c9865ed9ba82956b
-#         - result.code ShouldEqual 0
+  #       assertions:
+  #         # result of yes "Hello World" | head -n 2000 | md5sum -
+  #         - result.systemout ShouldContainSubstring c495dd848701a476c9865ed9ba82956b
+  #         - result.code ShouldEqual 0
+  - name: monitor rate speed
+    steps:
+      - script: rm -f /tmp/ts
+      - script: |
+          cb & \
+          sleep 1 && \
+          sleep 2 ; yes "Hello World" | head -n 10000 | nc localhost:1691 & \
+          sleep 1 && \
+          nc localhost:1961 < /dev/null  > /dev/null && \
+          killall cb
+        assertions:
+          - result.systemerr ShouldContainSubstring Starting Producer Server
+          - result.systemerr ShouldContainSubstring rate l/s
+          - result.code ShouldEqual 0
+
+  - name: update interval
+    steps:
+      - script: rm -f /tmp/ts
+      - script: |
+          cb --interval 10ms & \
+          sleep 1 && \
+          yes "Hello World" | head -n 10000 | nc localhost:1691 & \
+          sleep 1 && \
+          nc localhost:1961 < /dev/null  > /dev/null && \
+          killall cb
+        assertions:
+          - result.systemerr ShouldContainSubstring Starting Producer Server
+          - result.systemerr ShouldContainSubstring rate l/s
+          - result.code ShouldEqual 0

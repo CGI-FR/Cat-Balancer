@@ -56,6 +56,7 @@ import (
 	"bufio"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -228,11 +229,12 @@ type Balancer struct {
 	quit              chan struct{}
 	consumersSeen     int
 	producersSeen     int
+	interval          time.Duration
 }
 
 // New Balancer service.
 func New(producerNetwork string, producerAddress string,
-	consumerNetwork string, consumerAddress string, producersPoolSize int, consumersPoolSize int) *Balancer {
+	consumerNetwork string, consumerAddress string, producersPoolSize int, consumersPoolSize int, interval time.Duration) *Balancer {
 	return &Balancer{
 		RWMutex:           sync.RWMutex{},
 		producerNetwork:   producerNetwork,
@@ -247,6 +249,7 @@ func New(producerNetwork string, producerAddress string,
 		quit:              make(chan struct{}),
 		consumersSeen:     0,
 		producersSeen:     0,
+		interval:          interval,
 	}
 }
 
@@ -286,9 +289,9 @@ func (b *Balancer) Start() {
 	b.Lock()
 	events := make(chan Event, 1)
 
-	b.ph = NewProducerHandler(b, events, b.quit)
+	b.ph = NewProducerHandler(b, events, b.quit, b.interval)
 
-	b.ch = NewConsumerHandler(b, events, b.quit)
+	b.ch = NewConsumerHandler(b, events, b.quit, b.interval)
 
 	producer := NewListenerFactory(
 		b.ph,
@@ -385,10 +388,11 @@ func (l Listener) Start() {
 }
 
 type ProducerWorker struct {
-	conn   net.Conn
-	stream chan []byte
-	events chan<- Event
-	quit   <-chan struct{}
+	conn     net.Conn
+	stream   chan []byte
+	events   chan<- Event
+	quit     <-chan struct{}
+	interval time.Duration
 }
 
 func (w *ProducerWorker) Start() {
@@ -398,17 +402,51 @@ func (w *ProducerWorker) Start() {
 		w.events <- ProducerClose
 	}()
 
+	lineCounter := 0
+	ticker := time.NewTicker(w.interval)
 	reader := bufio.NewReader(w.conn)
+	incoming := make(chan []byte)
+
+	go func() {
+		for {
+			line, err := reader.ReadBytes(byte('\n'))
+			if err != nil {
+				log.Error().AnErr("readError", err)
+				close(incoming)
+
+				break
+			}
+
+			incoming <- line
+		}
+	}()
 
 	for {
-		line, err := reader.ReadBytes(byte('\n'))
-		if err != nil {
-			log.Error().AnErr("readError", err)
+		select {
+		case in, ok := <-incoming:
+			if !ok {
+				log.Debug().Str("remote", w.conn.RemoteAddr().String()).Msg("End of stream")
 
-			break
+				return
+			}
+
+			func() {
+				for {
+					select {
+					case w.stream <- in:
+						lineCounter++
+
+						return
+					case <-ticker.C:
+						log.Info().Int("rate l/s", lineCounter).Str("remote", w.conn.RemoteAddr().String()).Msg("input stream rate 2")
+						lineCounter = 0
+					}
+				}
+			}()
+		case <-ticker.C:
+			log.Info().Int("rate l/s", lineCounter).Str("remote", w.conn.RemoteAddr().String()).Msg("input stream rate")
+			lineCounter = 0
 		}
-
-		w.stream <- line
 	}
 }
 
@@ -416,10 +454,20 @@ type ProducerHandler struct {
 	balancer *Balancer
 	events   chan<- Event
 	quit     <-chan struct{}
+	interval time.Duration
 }
 
-func NewProducerHandler(balancer *Balancer, events chan<- Event, quit <-chan struct{}) *ProducerHandler {
-	return &ProducerHandler{balancer: balancer, events: events, quit: quit}
+func NewProducerHandler(
+	balancer *Balancer,
+	events chan<- Event,
+	quit <-chan struct{},
+	interval time.Duration) *ProducerHandler {
+	return &ProducerHandler{
+		balancer: balancer,
+		events:   events,
+		quit:     quit,
+		interval: interval,
+	}
 }
 
 func (ph *ProducerHandler) handleRequest(conn net.Conn) {
@@ -429,17 +477,24 @@ func (ph *ProducerHandler) handleRequest(conn net.Conn) {
 	log.Info().Str("remote", conn.RemoteAddr().String()).Msg("New producer")
 	ph.events <- NewProducer
 
-	worker := ProducerWorker{conn: conn, stream: ph.balancer.getStream(), events: ph.events, quit: ph.quit}
+	worker := ProducerWorker{
+		conn:     conn,
+		stream:   ph.balancer.getStream(),
+		events:   ph.events,
+		quit:     ph.quit,
+		interval: ph.interval,
+	}
 	ph.balancer.RUnlock()
 	log.Debug().Msg("RUnLock")
 	worker.Start()
 }
 
 type ConsumerWorker struct {
-	conn   net.Conn
-	stream chan []byte
-	events chan<- Event
-	quit   <-chan struct{}
+	conn     net.Conn
+	stream   chan []byte
+	events   chan<- Event
+	quit     <-chan struct{}
+	interval time.Duration
 }
 
 func (w *ConsumerWorker) Start() {
@@ -449,8 +504,14 @@ func (w *ConsumerWorker) Start() {
 		w.events <- ConsumerClose
 	}()
 
+	lineCounter := 0
+	ticker := time.NewTicker(w.interval)
+
 	for {
 		select {
+		case <-ticker.C:
+			log.Info().Int("rate l/s", lineCounter).Str("remote", w.conn.RemoteAddr().String()).Msg("output stream rate")
+			lineCounter = 0
 		case line, ok := <-w.stream:
 			if !ok {
 				log.Debug().Str("remote", w.conn.RemoteAddr().String()).Msg("End of stream")
@@ -464,6 +525,8 @@ func (w *ConsumerWorker) Start() {
 
 				return
 			}
+			lineCounter++
+
 		case <-w.quit:
 			return
 		}
@@ -474,10 +537,20 @@ type ConsumerHandler struct {
 	balancer *Balancer
 	events   chan<- Event
 	quit     <-chan struct{}
+	interval time.Duration
 }
 
-func NewConsumerHandler(balancer *Balancer, events chan<- Event, quit <-chan struct{}) *ConsumerHandler {
-	return &ConsumerHandler{balancer: balancer, events: events, quit: quit}
+func NewConsumerHandler(
+	balancer *Balancer,
+	events chan<- Event,
+	quit <-chan struct{},
+	interval time.Duration) *ConsumerHandler {
+	return &ConsumerHandler{
+		balancer: balancer,
+		events:   events,
+		quit:     quit,
+		interval: interval,
+	}
 }
 
 func (ch *ConsumerHandler) handleRequest(conn net.Conn) {
@@ -487,7 +560,13 @@ func (ch *ConsumerHandler) handleRequest(conn net.Conn) {
 	log.Info().Str("remote", conn.RemoteAddr().String()).Msg("New consumer")
 	ch.events <- NewConsumer
 
-	worker := ConsumerWorker{conn: conn, stream: ch.balancer.getStream(), events: ch.events, quit: ch.quit}
+	worker := ConsumerWorker{
+		conn:     conn,
+		stream:   ch.balancer.getStream(),
+		events:   ch.events,
+		quit:     ch.quit,
+		interval: ch.interval,
+	}
 	ch.balancer.RUnlock()
 	log.Debug().Msg("RUnLock")
 	worker.Start()
