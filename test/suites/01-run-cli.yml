@@ -121,3 +121,17 @@ testcases:
           - result.systemerr ShouldContainSubstring Starting Producer Server
           - result.systemerr ShouldContainSubstring rate l/s
           - result.code ShouldEqual 0
+
+  - name: back pressure detection
+    steps:
+      - script: rm -f /tmp/ts
+      - script: |
+          cb --interval 10ms & \
+          sleep 1 && \
+          yes "Hello World" | head -n 10000 | nc localhost:1691 & \
+          sleep 2 && \
+          killall cb
+        assertions:
+          - result.systemerr ShouldContainSubstring Starting Producer Server
+          - result.systemerr ShouldContainSubstring back pressure detected
+          - result.code ShouldEqual 0

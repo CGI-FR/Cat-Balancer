@@ -406,6 +406,7 @@ func (w *ProducerWorker) Start() {
 	ticker := time.NewTicker(w.interval)
 	reader := bufio.NewReader(w.conn)
 	incoming := make(chan []byte)
+	backPressure := false
 
 	go func() {
 		for {
@@ -438,14 +439,32 @@ func (w *ProducerWorker) Start() {
 
 						return
 					case <-ticker.C:
-						log.Info().Int("rate l/s", lineCounter).Str("remote", w.conn.RemoteAddr().String()).Msg("input stream rate 2")
+						if backPressure {
+							log.Warn().Str("remote", w.conn.RemoteAddr().String()).Msg("Back presure detected")
+						}
+
+						log.Info().
+							Float32("rate l/s",
+								(float32(lineCounter)*float32(time.Second)/float32(w.interval)),
+							).
+							Str("remote", w.conn.RemoteAddr().String()).
+							Msg("input stream rate")
+
 						lineCounter = 0
+						backPressure = true
 					}
 				}
 			}()
 		case <-ticker.C:
-			log.Info().Int("rate l/s", lineCounter).Str("remote", w.conn.RemoteAddr().String()).Msg("input stream rate")
+			log.Info().
+				Float32("rate l/s",
+					(float32(lineCounter)*float32(time.Second)/float32(w.interval)),
+				).
+				Str("remote", w.conn.RemoteAddr().String()).
+				Msg("input stream rate")
+
 			lineCounter = 0
+			backPressure = false
 		}
 	}
 }
@@ -510,7 +529,11 @@ func (w *ConsumerWorker) Start() {
 	for {
 		select {
 		case <-ticker.C:
-			log.Info().Int("rate l/s", lineCounter).Str("remote", w.conn.RemoteAddr().String()).Msg("output stream rate")
+			log.Info().
+				Float32("rate l/s", (float32(lineCounter)*float32(time.Second)/float32(w.interval))).
+				Str("remote", w.conn.RemoteAddr().String()).
+				Msg("output stream rate")
+
 			lineCounter = 0
 		case line, ok := <-w.stream:
 			if !ok {
