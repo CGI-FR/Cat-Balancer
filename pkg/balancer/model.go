@@ -95,22 +95,15 @@ type StateEvent struct {
 	event Event
 }
 
-func updateClients(event Event, consumers int, producers int) (newEvent Event, newConsumers int, newProducers int) {
+func updateProducers(event Event, producers int) (newEvent Event, newProducers int) {
 	newEvent = event
-	newConsumers = consumers
 	newProducers = producers
 
 	// nolint: exhaustive
 	switch event {
-	case NewConsumer:
-		newConsumers = consumers + 1
 	case NewProducer:
 		newProducers = producers + 1
-	case ConsumerClose:
-		newConsumers = consumers - 1
-		if newConsumers == 0 {
-			newEvent = LastConsumerClose
-		}
+
 	case ProducerClose:
 		newProducers = producers - 1
 		if newProducers == 0 {
@@ -120,7 +113,28 @@ func updateClients(event Event, consumers int, producers int) (newEvent Event, n
 	default:
 	}
 
-	return newEvent, newConsumers, newProducers
+	return newEvent, newProducers
+}
+
+func updateConsumers(event Event, consumers int) (newEvent Event, newConsumers int) {
+	newEvent = event
+	newConsumers = consumers
+
+	// nolint: exhaustive
+	switch event {
+	case NewConsumer:
+		newConsumers = consumers + 1
+
+	case ConsumerClose:
+		newConsumers = consumers - 1
+		if newConsumers == 0 {
+			newEvent = LastConsumerClose
+		}
+
+	default:
+	}
+
+	return newEvent, newConsumers
 }
 
 // nolint: cyclop
@@ -182,29 +196,33 @@ func update(
 
 type Balancer struct {
 	sync.RWMutex
-	producerNetwork string
-	producerAddress string
-	consumerNetwork string
-	consumerAddress string
-	ch              *ConsumerHandler
-	ph              *ProducerHandler
-	stream          chan []byte
-	quit            chan struct{}
+	producerNetwork   string
+	producerAddress   string
+	producersPoolSize int
+	consumerNetwork   string
+	consumerAddress   string
+	consumersPoolSize int
+	ch                *ConsumerHandler
+	ph                *ProducerHandler
+	stream            chan []byte
+	quit              chan struct{}
 }
 
 // New Balancer service.
 func New(producerNetwork string, producerAddress string,
-	consumerNetwork string, consumerAddress string) *Balancer {
+	consumerNetwork string, consumerAddress string, producersPoolSize int, consumersPoolSize int) *Balancer {
 	return &Balancer{
-		RWMutex:         sync.RWMutex{},
-		producerNetwork: producerNetwork,
-		producerAddress: producerAddress,
-		consumerNetwork: consumerNetwork,
-		consumerAddress: consumerAddress,
-		ch:              &ConsumerHandler{}, // nolint: exhaustivestruct
-		ph:              &ProducerHandler{}, // nolint: exhaustivestruct
-		stream:          make(chan []byte),
-		quit:            make(chan struct{}),
+		RWMutex:           sync.RWMutex{},
+		producerNetwork:   producerNetwork,
+		producerAddress:   producerAddress,
+		producersPoolSize: producersPoolSize,
+		consumerNetwork:   consumerNetwork,
+		consumerAddress:   consumerAddress,
+		consumersPoolSize: consumersPoolSize,
+		ch:                &ConsumerHandler{}, // nolint: exhaustivestruct
+		ph:                &ProducerHandler{}, // nolint: exhaustivestruct
+		stream:            make(chan []byte),
+		quit:              make(chan struct{}),
 	}
 }
 
@@ -272,7 +290,8 @@ func (b *Balancer) Start() {
 
 	for event := range events {
 		log.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
-		event, consumers, producers = updateClients(event, consumers, producers)
+		event, consumers = updateConsumers(event, consumers)
+		event, producers = updateProducers(event, producers)
 
 		log.Debug().
 			Int("consumers", consumers).
