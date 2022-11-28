@@ -39,13 +39,13 @@ package balancer
 // |                          |ConsumerAwaiting|   |ProducerAwaiting|                            |
 // |                          |----------------|   |----------------|                            |
 // |                          `----------------'   `----------------'                            |
-// |          LastProducerClose |  NewPro. |           | NewCons. | LastConsumerClose            |
+// |          LastConsumerClose |  NewPro. |           | AllConsS.| LastProducerClose            |
 // |                            v          v           v          v                              |
 // | ,-----------------------------.   ,-------------------.   ,-----------------------------.   |
 // | |ConsumerAwaitingAndCloseFirst|   |ConsumerAndProcuder|   |ProducerAwaitingAndCloseFirst|   |
 // | |-----------------------------|   |-------------------|   |-----------------------------|   |
 // | `-----------------------------'   `-------------------'   `-----------------------------'   |
-// |     NewProducer |                    |           |                        | NewConsumer     |
+// |     NewProducer |                    |           |                        | AllConsumersSeen|
 // |                 v  LastConsumerClose |           | LastProducerClose      v                 |
 // |       ,------------------.           |           |              ,------------------.        |
 // |       |ConsumerCloseFirst|           |           |              |ProducerCloseFirst|        |
@@ -70,6 +70,7 @@ const (
 
 	ConsumerListenerReady
 	NewConsumer
+	AllConsumersSeen
 	ConsumerClose
 	LastConsumerClose
 )
@@ -116,25 +117,35 @@ func updateProducers(event Event, producers int) (newEvent Event, newProducers i
 	return newEvent, newProducers
 }
 
-func updateConsumers(event Event, consumers int) (newEvent Event, newConsumers int) {
+func updateConsumers(
+	event Event, consumers int, poolSize int, consumersSeen int,
+) (
+	newEvent Event, newConsumers int, newConsumersSeen int,
+) {
 	newEvent = event
 	newConsumers = consumers
+	newConsumersSeen = consumersSeen
 
 	// nolint: exhaustive
 	switch event {
 	case NewConsumer:
 		newConsumers = consumers + 1
+		newConsumersSeen = consumersSeen + 1
+
+		if poolSize == 0 || newConsumersSeen == poolSize {
+			newEvent = AllConsumersSeen
+		}
 
 	case ConsumerClose:
 		newConsumers = consumers - 1
-		if newConsumers == 0 {
+		if newConsumers == 0 && (poolSize == 0 || consumersSeen == poolSize) {
 			newEvent = LastConsumerClose
 		}
 
 	default:
 	}
 
-	return newEvent, newConsumers
+	return newEvent, newConsumers, newConsumersSeen
 }
 
 // nolint: cyclop
@@ -155,14 +166,14 @@ func update(
 	case StateEvent{state: ProducerReady, event: ConsumerListenerReady}:
 		newState = NoConsumerAndNoProducer
 
-	case StateEvent{state: NoConsumerAndNoProducer, event: NewConsumer}:
+	case StateEvent{state: NoConsumerAndNoProducer, event: AllConsumersSeen}:
 		newState = ConsumerAwaiting
 	case StateEvent{state: ConsumerAwaiting, event: NewProducer}:
 		newState = ConsumerAndProcuder
 
 	case StateEvent{state: NoConsumerAndNoProducer, event: NewProducer}:
 		newState = ProducerAwaiting
-	case StateEvent{state: ProducerAwaiting, event: NewConsumer}:
+	case StateEvent{state: ProducerAwaiting, event: AllConsumersSeen}:
 		newState = ConsumerAndProcuder
 
 	case StateEvent{state: ConsumerAndProcuder, event: LastConsumerClose}:
@@ -177,7 +188,7 @@ func update(
 
 	case StateEvent{state: ProducerAwaiting, event: LastProducerClose}:
 		newState = ProducerAwaitingAndCloseFirst
-	case StateEvent{state: ProducerAwaitingAndCloseFirst, event: NewConsumer}:
+	case StateEvent{state: ProducerAwaitingAndCloseFirst, event: AllConsumersSeen}:
 		newState = ProducerCloseFirst
 
 	case StateEvent{state: ConsumerAwaiting, event: LastProducerClose}:
@@ -206,6 +217,7 @@ type Balancer struct {
 	ph                *ProducerHandler
 	stream            chan []byte
 	quit              chan struct{}
+	consumersSeen     int
 }
 
 // New Balancer service.
@@ -223,6 +235,7 @@ func New(producerNetwork string, producerAddress string,
 		ph:                &ProducerHandler{}, // nolint: exhaustivestruct
 		stream:            make(chan []byte),
 		quit:              make(chan struct{}),
+		consumersSeen:     0,
 	}
 }
 
@@ -238,6 +251,7 @@ func (b *Balancer) action(state State) {
 
 func (b *Balancer) resetSession() {
 	b.stream = make(chan []byte, 1)
+	b.consumersSeen = 0
 
 	log.Logger.Info().Msg("Start to a new stream")
 
@@ -255,6 +269,7 @@ func (b *Balancer) closeStream() {
 
 // Start the balancer Service and wait for clients.
 func (b *Balancer) Start() {
+	log.Info().Int("ConsumersPool", b.consumersPoolSize).Msg("balancer Starting")
 	log.Debug().Msg("Lock")
 	b.Lock()
 	events := make(chan Event, 1)
@@ -290,11 +305,12 @@ func (b *Balancer) Start() {
 
 	for event := range events {
 		log.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
-		event, consumers = updateConsumers(event, consumers)
+		event, consumers, b.consumersSeen = updateConsumers(event, consumers, b.consumersPoolSize, b.consumersSeen)
 		event, producers = updateProducers(event, producers)
 
 		log.Debug().
 			Int("consumers", consumers).
+			Int("consumersSeen", b.consumersSeen).
 			Int("producers", producers).
 			Int("computedEvent", int(event)).
 			Msg("consumers producer stats")

@@ -6,13 +6,13 @@ testcases:
     steps:
       - script: rm -f /tmp/ts
       - script: |
-            cb & \
-            sleep 1 && \
-            nc localhost:1961 < /dev/null  > /tmp/ts & \
-            sleep 1 && \
-            echo "Hello World" | nc localhost:1691 && \
-            sleep 1 && \
-            killall cb 
+          cb & \
+          sleep 1 && \
+          nc localhost:1961 < /dev/null  > /tmp/ts & \
+          sleep 1 && \
+          echo "Hello World" | nc localhost:1691 && \
+          sleep 1 && \
+          killall cb
         assertions:
           - result.systemerr ShouldContainSubstring Starting Producer Server
           - result.code ShouldEqual 0
@@ -40,18 +40,37 @@ testcases:
         assertions:
           - result.systemout ShouldContainSubstring Hello World
           - result.code ShouldEqual 0
-        
+
   - name: one consumer one producer, many lines
     steps:
       - script: rm -f /tmp/ts
       - script: |
-            cb & \
-            sleep 1 && \
-            yes "Hello World" | head -n 100000 | nc localhost:1691 & \
-            sleep 1 && \
-            nc localhost:1961 < /dev/null  | md5sum -  && \
-            killall cb
+          cb & \
+          sleep 1 && \
+          yes "Hello World" | head -n 100000 | nc localhost:1691 & \
+          sleep 1 && \
+          nc localhost:1961 < /dev/null  | md5sum -  && \
+          killall cb
         assertions:
           # result of yes "Hello World" | head -n 100000 | md5sum -
           - result.systemout ShouldContainSubstring d1abe422def53e2c04bf8e39d13a383c
+          - result.code ShouldEqual 0
+
+  - name: two consumers and one producer in a pool
+    steps:
+      - script: rm -f /tmp/ts
+      - script: |
+          cb  --producers-pool-size 0 --consumers-pool-size 2& \
+          sleep 1 && \
+          yes "Hello World" | head -n 1000 | nc localhost:1691 & \
+          sleep 1 && \
+          nc localhost:1961 < /dev/null > /tmp/ts1    & \
+          sleep 1&& \
+          nc localhost:1961 < /dev/null > /tmp/ts2  &&
+          cat /tmp/ts1 /tmp/ts2 | md5sum - &&
+          killall cb
+
+        assertions:
+          # result of yes "Hello World" | head -n 1000 | md5sum -
+          - result.systemout ShouldContainSubstring f094e7b2750a9559a021f877710c6709
           - result.code ShouldEqual 0

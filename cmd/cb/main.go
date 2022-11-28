@@ -42,9 +42,11 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	var (
-		producerPort int
-		consumerPort int
-		verbosity    string
+		producerPort     int
+		consumerPort     int
+		verbosity        string
+		producerPoolSize int
+		consumerPoolSize int
 	)
 
 	// nolint: exhaustivestruct
@@ -75,13 +77,15 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 				zerolog.SetGlobalLevel(zerolog.Disabled)
 			}
 
-			run(producerPort, consumerPort)
+			run(producerPort, consumerPort, producerPoolSize, consumerPoolSize)
 		},
 	}
 	// nolint: gomnd
 	rootCmd.PersistentFlags().IntVarP(&producerPort, "producer-port", "p", 1691, "producer listen port")
 	// nolint: gomnd
 	rootCmd.PersistentFlags().IntVarP(&consumerPort, "consumer-port", "c", 1961, "consumer listen port")
+	rootCmd.PersistentFlags().IntVarP(&producerPoolSize, "producers-pool-size", "P", 0, "Producers expected")
+	rootCmd.PersistentFlags().IntVarP(&consumerPoolSize, "consumers-pool-size", "C", 0, "Consumers expected")
 	rootCmd.PersistentFlags().
 		StringVarP(&verbosity,
 			"verbosity",
@@ -96,8 +100,11 @@ There is NO WARRANTY, to the extent permitted by law.`, version, commit, buildDa
 	}
 }
 
-func run(producerPort int, consumerPort int) {
+func run(producerPort int, consumerPort int, producersPoolSize int, consumersPoolSize int) {
 	log.Info().Msgf("%v %v (commit=%v date=%v by=%v)", name, version, commit, buildDate, builtBy)
 
-	balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort)).Start()
+	balancer.New(
+		"tcp", fmt.Sprintf(":%d", producerPort),
+		"tcp", fmt.Sprintf(":%d", consumerPort),
+		producersPoolSize, consumersPoolSize).Start()
 }
