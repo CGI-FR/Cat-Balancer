@@ -388,11 +388,13 @@ func (l Listener) Start() {
 }
 
 type ProducerWorker struct {
-	conn     net.Conn
-	stream   chan []byte
-	events   chan<- Event
-	quit     <-chan struct{}
-	interval time.Duration
+	conn         net.Conn
+	stream       chan []byte
+	events       chan<- Event
+	quit         <-chan struct{}
+	interval     time.Duration
+	lineCounter  int
+	backPressure bool
 }
 
 func (w *ProducerWorker) Start() {
@@ -402,11 +404,10 @@ func (w *ProducerWorker) Start() {
 		w.events <- ProducerClose
 	}()
 
-	lineCounter := 0
 	ticker := time.NewTicker(w.interval)
 	reader := bufio.NewReader(w.conn)
 	incoming := make(chan []byte)
-	backPressure := false
+	w.backPressure = false
 
 	go func() {
 		for {
@@ -431,40 +432,39 @@ func (w *ProducerWorker) Start() {
 				return
 			}
 
-			func() {
-				for {
-					select {
-					case w.stream <- in:
-						lineCounter++
-
-						return
-					case <-ticker.C:
-						if backPressure {
-							log.Warn().Str("remote", w.conn.RemoteAddr().String()).Msg("Back presure detected")
-						}
-
-						log.Info().
-							Float32("rate l/s",
-								(float32(lineCounter)*float32(time.Second)/float32(w.interval)),
-							).
-							Str("remote", w.conn.RemoteAddr().String()).
-							Msg("input stream rate")
-
-						lineCounter = 0
-						backPressure = true
-					}
-				}
-			}()
+			w.pushInStream(in, ticker.C)
 		case <-ticker.C:
-			log.Info().
-				Float32("rate l/s",
-					(float32(lineCounter)*float32(time.Second)/float32(w.interval)),
-				).
-				Str("remote", w.conn.RemoteAddr().String()).
-				Msg("input stream rate")
+			w.updateStats()
+			w.backPressure = false
+		}
+	}
+}
 
-			lineCounter = 0
-			backPressure = false
+func (w *ProducerWorker) updateStats() {
+	log.Info().
+		Float32("rate l/s",
+			(float32(w.lineCounter)*float32(time.Second)/float32(w.interval)),
+		).
+		Str("remote", w.conn.RemoteAddr().String()).
+		Msg("input stream rate")
+
+	w.lineCounter = 0
+}
+
+func (w *ProducerWorker) pushInStream(in []byte, updateTicker <-chan time.Time) {
+	for {
+		select {
+		case w.stream <- in:
+			w.lineCounter++
+
+			return
+		case <-updateTicker:
+			if w.backPressure {
+				log.Warn().Str("remote", w.conn.RemoteAddr().String()).Msg("Back pressure detected")
+			}
+
+			w.updateStats()
+			w.backPressure = true
 		}
 	}
 }
@@ -497,11 +497,13 @@ func (ph *ProducerHandler) handleRequest(conn net.Conn) {
 	ph.events <- NewProducer
 
 	worker := ProducerWorker{
-		conn:     conn,
-		stream:   ph.balancer.getStream(),
-		events:   ph.events,
-		quit:     ph.quit,
-		interval: ph.interval,
+		conn:         conn,
+		stream:       ph.balancer.getStream(),
+		events:       ph.events,
+		quit:         ph.quit,
+		interval:     ph.interval,
+		lineCounter:  0,
+		backPressure: false,
 	}
 	ph.balancer.RUnlock()
 	log.Debug().Msg("RUnLock")

@@ -133,5 +133,5 @@ testcases:
           killall cb
         assertions:
           - result.systemerr ShouldContainSubstring Starting Producer Server
-          - result.systemerr ShouldContainSubstring back pressure detected
+          - result.systemerr ShouldContainSubstring Back pressure detected
           - result.code ShouldEqual 0
