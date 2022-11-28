@@ -14,6 +14,12 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+
+## [0.5.0] 2022-11-28
+
+- `Added` Rate metrics
+- `Added` Producers back pressure detection
+
 ## [0.4.0] 2022-07-05
 
 - `Added` Cat Pipe can execute process and capture stdout or stderr stream
