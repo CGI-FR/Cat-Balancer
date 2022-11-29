@@ -124,6 +124,28 @@ func consume(t *testing.T, port int, inputs chan string, wg *sync.WaitGroup) {
 	}
 }
 
+func produce(t *testing.T, port int, messages int, wg *sync.WaitGroup) {
+	t.Helper()
+
+	producer, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		t.Error("could not connect to consumer server: ", err)
+	}
+
+	defer func() {
+		producer.Close()
+		wg.Done()
+	}()
+
+	for i := 0; i < messages; i++ {
+		_, err = producer.Write([]byte("hello world\n"))
+
+		if err != nil {
+			t.Fail()
+		}
+	}
+}
+
 func TestManyConsumersOneProducer(t *testing.T) {
 	t.Parallel()
 
@@ -246,6 +268,66 @@ func TestPoolConsumersOneProducer(t *testing.T) {
 		wg.Wait()
 		close(inputs)
 	}()
+
+	assertGroup.Wait()
+}
+
+func TestPoolProducersOneConsumers(t *testing.T) {
+	t.Parallel()
+
+	const (
+		PRODUCERS int = 2
+		MESSAGES  int = 100
+	)
+
+	ports, _ := GetFreePorts(2)
+
+	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]), PRODUCERS+1, 0)
+
+	go b.Start()
+
+	time.Sleep(time.Second)
+
+	var wg sync.WaitGroup
+
+	wg.Add(PRODUCERS)
+
+	for i := 0; i < PRODUCERS; i++ {
+		go produce(t, ports[0], MESSAGES, &wg)
+	}
+
+	var assertGroup sync.WaitGroup
+
+	assertGroup.Add(1)
+
+	inputs := make(chan string, 1)
+
+	go func() {
+		consume(t, ports[1], inputs, &assertGroup)
+		close(inputs)
+	}()
+
+	assertGroup.Add(1)
+
+	go func() {
+		i := 0
+
+		for line := range inputs {
+			assert.Equal(t, "hello world\n", line)
+			i++
+		}
+
+		assert.Equal(t, (PRODUCERS+1)*MESSAGES, i)
+		assertGroup.Done()
+	}()
+
+	time.Sleep(time.Second)
+
+	// start the to late producers
+	wg.Wait()
+	wg.Add(1)
+
+	go produce(t, ports[0], MESSAGES, &wg)
 
 	assertGroup.Wait()
 }

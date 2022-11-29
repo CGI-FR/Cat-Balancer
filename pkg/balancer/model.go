@@ -65,6 +65,7 @@ type Event int
 const (
 	ProducerListenerReady Event = iota
 	NewProducer
+	AllProducersSeen
 	ProducerClose
 	LastProducerClose
 
@@ -96,25 +97,33 @@ type StateEvent struct {
 	event Event
 }
 
-func updateProducers(event Event, producers int) (newEvent Event, newProducers int) {
+func updateProducers(
+	event Event, producers int, poolSize int, producersSeen int,
+) (
+	newEvent Event, newProducers int, newproducersSeen int,
+) {
 	newEvent = event
 	newProducers = producers
-
+	newproducersSeen = producersSeen
 	// nolint: exhaustive
 	switch event {
 	case NewProducer:
 		newProducers = producers + 1
+		newproducersSeen = producersSeen + 1
 
+		if poolSize == 0 || newproducersSeen == poolSize {
+			newEvent = AllProducersSeen
+		}
 	case ProducerClose:
 		newProducers = producers - 1
-		if newProducers == 0 {
+		if newProducers == 0 && (poolSize == 0 || producersSeen == poolSize) {
 			newEvent = LastProducerClose
 		}
 
 	default:
 	}
 
-	return newEvent, newProducers
+	return newEvent, newProducers, newproducersSeen
 }
 
 func updateConsumers(
@@ -168,10 +177,10 @@ func update(
 
 	case StateEvent{state: NoConsumerAndNoProducer, event: AllConsumersSeen}:
 		newState = ConsumerAwaiting
-	case StateEvent{state: ConsumerAwaiting, event: NewProducer}:
+	case StateEvent{state: ConsumerAwaiting, event: AllProducersSeen}:
 		newState = ConsumerAndProcuder
 
-	case StateEvent{state: NoConsumerAndNoProducer, event: NewProducer}:
+	case StateEvent{state: NoConsumerAndNoProducer, event: AllProducersSeen}:
 		newState = ProducerAwaiting
 	case StateEvent{state: ProducerAwaiting, event: AllConsumersSeen}:
 		newState = ConsumerAndProcuder
@@ -218,6 +227,7 @@ type Balancer struct {
 	stream            chan []byte
 	quit              chan struct{}
 	consumersSeen     int
+	producersSeen     int
 }
 
 // New Balancer service.
@@ -236,6 +246,7 @@ func New(producerNetwork string, producerAddress string,
 		stream:            make(chan []byte),
 		quit:              make(chan struct{}),
 		consumersSeen:     0,
+		producersSeen:     0,
 	}
 }
 
@@ -252,6 +263,7 @@ func (b *Balancer) action(state State) {
 func (b *Balancer) resetSession() {
 	b.stream = make(chan []byte, 1)
 	b.consumersSeen = 0
+	b.producersSeen = 0
 
 	log.Logger.Info().Msg("Start to a new stream")
 
@@ -306,12 +318,13 @@ func (b *Balancer) Start() {
 	for event := range events {
 		log.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
 		event, consumers, b.consumersSeen = updateConsumers(event, consumers, b.consumersPoolSize, b.consumersSeen)
-		event, producers = updateProducers(event, producers)
+		event, producers, b.producersSeen = updateProducers(event, producers, b.producersPoolSize, b.producersSeen)
 
 		log.Debug().
 			Int("consumers", consumers).
 			Int("consumersSeen", b.consumersSeen).
 			Int("producers", producers).
+			Int("producersSeen", b.producersSeen).
 			Int("computedEvent", int(event)).
 			Msg("consumers producer stats")
 

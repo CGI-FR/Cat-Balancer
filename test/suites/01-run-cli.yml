@@ -56,7 +56,7 @@ testcases:
           - result.systemout ShouldContainSubstring d1abe422def53e2c04bf8e39d13a383c
           - result.code ShouldEqual 0
 
-  - name: two consumers and one producer in a pool
+  - name: two consumers  in a pool and one producer
     steps:
       - script: rm -f /tmp/ts
       - script: |
@@ -74,3 +74,21 @@ testcases:
           # result of yes "Hello World" | head -n 1000 | md5sum -
           - result.systemout ShouldContainSubstring f094e7b2750a9559a021f877710c6709
           - result.code ShouldEqual 0
+# - name: two producers in a pool and one consumers
+#   steps:
+#     - script: rm -f /tmp/ts
+#     - script: |
+#         cb  --producers-pool-size 2 --consumers-pool-size 0& \
+#         sleep 1 && \
+#         yes "Hello World" | head -n 1000 | nc localhost:1691 && \
+#         nc localhost:1961 < /dev/null > /tmp/ts & \
+#         sleep 1 && \
+#         yes "Hello World" | head -n 1000 | nc localhost:1691 && \
+#         sleep 1&& \
+#         cat /tmp/ts | md5sum - &&
+#         killall cb
+
+#       assertions:
+#         # result of yes "Hello World" | head -n 2000 | md5sum -
+#         - result.systemout ShouldContainSubstring c495dd848701a476c9865ed9ba82956b
+#         - result.code ShouldEqual 0
