@@ -63,7 +63,7 @@ func TestBalancerStart(t *testing.T) {
 		t.Error(err)
 	}
 
-	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]), time.Second)
+	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]), 0, 0, time.Second)
 
 	go b.Start()
 
@@ -282,7 +282,8 @@ func TestPoolProducersOneConsumers(t *testing.T) {
 
 	ports, _ := GetFreePorts(2)
 
-	b := balancer.New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]), PRODUCERS+1, 0, time.Second)
+	b := balancer.
+		New("tcp", fmt.Sprintf(":%d", ports[0]), "tcp", fmt.Sprintf(":%d", ports[1]), PRODUCERS+1, 0, time.Second)
 
 	go b.Start()
 

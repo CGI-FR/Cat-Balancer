@@ -234,7 +234,9 @@ type Balancer struct {
 
 // New Balancer service.
 func New(producerNetwork string, producerAddress string,
-	consumerNetwork string, consumerAddress string, producersPoolSize int, consumersPoolSize int, interval time.Duration) *Balancer {
+	consumerNetwork string, consumerAddress string,
+	producersPoolSize int, consumersPoolSize int,
+	interval time.Duration) *Balancer {
 	return &Balancer{
 		RWMutex:           sync.RWMutex{},
 		producerNetwork:   producerNetwork,

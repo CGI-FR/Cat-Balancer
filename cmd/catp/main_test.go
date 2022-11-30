@@ -70,7 +70,9 @@ func Test_run(t *testing.T) {
 
 	t.Parallel()
 
-	go balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort), 0, 0, time.Second).Start()
+	go balancer.
+		New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort), 0, 0, time.Second).
+		Start()
 
 	wg := sync.WaitGroup{}
 
@@ -118,7 +120,9 @@ func Test_run_producer_first(t *testing.T) {
 
 	t.Parallel()
 
-	go balancer.New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort), 0, 0, time.Second).Start()
+	go balancer.
+		New("tcp", fmt.Sprintf(":%d", producerPort), "tcp", fmt.Sprintf(":%d", consumerPort), 0, 0, time.Second).
+		Start()
 
 	reader := strings.NewReader("hello\n")
 	// nolint: exhaustivestruct
