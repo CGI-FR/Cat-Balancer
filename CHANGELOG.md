@@ -14,11 +14,11 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
-
-## [0.5.0] 2022-11-28
+## [0.5.0] 2022-11-30
 
 - `Added` Rate metrics
 - `Added` Producers back pressure detection
+- `Added` Optionaly wait for configured consumers and producers pool
 
 ## [0.4.0] 2022-07-05
 

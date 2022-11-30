@@ -10,11 +10,12 @@ Cat Balancer is line based load balancer for net cat `nc`.
 - Individual rate metrics in line / second for all peers
 - Back Pressure detection for each producer
 - Start a new session after drain consumers
+- Optionaly wait for configured consumers and producers pool
 
 ## Usage
 
 ```
-cb [-p <producers-port>] [-c <consumers-port>] [-i <interval>]
+cb [-p <producers-port>] [-c <consumers-port>] [-i <interval>] [-C <consumers pool size>] [-P <producers pool size>]
 ```
 
 ###  One Producer to One Consumer
