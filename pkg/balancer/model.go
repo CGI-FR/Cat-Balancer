@@ -39,13 +39,13 @@ package balancer
 // |                          |ConsumerAwaiting|   |ProducerAwaiting|                            |
 // |                          |----------------|   |----------------|                            |
 // |                          `----------------'   `----------------'                            |
-// |          LastProducerClose |  NewPro. |           | NewCons. | LastConsumerClose            |
+// |          LastConsumerClose |  NewPro. |           | AllConsS.| LastProducerClose            |
 // |                            v          v           v          v                              |
 // | ,-----------------------------.   ,-------------------.   ,-----------------------------.   |
 // | |ConsumerAwaitingAndCloseFirst|   |ConsumerAndProcuder|   |ProducerAwaitingAndCloseFirst|   |
 // | |-----------------------------|   |-------------------|   |-----------------------------|   |
 // | `-----------------------------'   `-------------------'   `-----------------------------'   |
-// |     NewProducer |                    |           |                        | NewConsumer     |
+// |     NewProducer |                    |           |                        | AllConsumersSeen|
 // |                 v  LastConsumerClose |           | LastProducerClose      v                 |
 // |       ,------------------.           |           |              ,------------------.        |
 // |       |ConsumerCloseFirst|           |           |              |ProducerCloseFirst|        |
@@ -65,11 +65,13 @@ type Event int
 const (
 	ProducerListenerReady Event = iota
 	NewProducer
+	AllProducersSeen
 	ProducerClose
 	LastProducerClose
 
 	ConsumerListenerReady
 	NewConsumer
+	AllConsumersSeen
 	ConsumerClose
 	LastConsumerClose
 )
@@ -95,32 +97,64 @@ type StateEvent struct {
 	event Event
 }
 
-func updateClients(event Event, consumers int, producers int) (newEvent Event, newConsumers int, newProducers int) {
+func updateProducers(
+	event Event, producers int, poolSize int, producersSeen int,
+) (
+	newEvent Event, newProducers int, newproducersSeen int,
+) {
 	newEvent = event
-	newConsumers = consumers
 	newProducers = producers
-
+	newproducersSeen = producersSeen
 	// nolint: exhaustive
 	switch event {
-	case NewConsumer:
-		newConsumers = consumers + 1
 	case NewProducer:
 		newProducers = producers + 1
-	case ConsumerClose:
-		newConsumers = consumers - 1
-		if newConsumers == 0 {
-			newEvent = LastConsumerClose
+		newproducersSeen = producersSeen + 1
+
+		if poolSize == 0 || newproducersSeen == poolSize {
+			newEvent = AllProducersSeen
 		}
 	case ProducerClose:
 		newProducers = producers - 1
-		if newProducers == 0 {
+		if newProducers == 0 && (poolSize == 0 || producersSeen == poolSize) {
 			newEvent = LastProducerClose
 		}
 
 	default:
 	}
 
-	return newEvent, newConsumers, newProducers
+	return newEvent, newProducers, newproducersSeen
+}
+
+func updateConsumers(
+	event Event, consumers int, poolSize int, consumersSeen int,
+) (
+	newEvent Event, newConsumers int, newConsumersSeen int,
+) {
+	newEvent = event
+	newConsumers = consumers
+	newConsumersSeen = consumersSeen
+
+	// nolint: exhaustive
+	switch event {
+	case NewConsumer:
+		newConsumers = consumers + 1
+		newConsumersSeen = consumersSeen + 1
+
+		if poolSize == 0 || newConsumersSeen == poolSize {
+			newEvent = AllConsumersSeen
+		}
+
+	case ConsumerClose:
+		newConsumers = consumers - 1
+		if newConsumers == 0 && (poolSize == 0 || consumersSeen == poolSize) {
+			newEvent = LastConsumerClose
+		}
+
+	default:
+	}
+
+	return newEvent, newConsumers, newConsumersSeen
 }
 
 // nolint: cyclop
@@ -141,14 +175,14 @@ func update(
 	case StateEvent{state: ProducerReady, event: ConsumerListenerReady}:
 		newState = NoConsumerAndNoProducer
 
-	case StateEvent{state: NoConsumerAndNoProducer, event: NewConsumer}:
+	case StateEvent{state: NoConsumerAndNoProducer, event: AllConsumersSeen}:
 		newState = ConsumerAwaiting
-	case StateEvent{state: ConsumerAwaiting, event: NewProducer}:
+	case StateEvent{state: ConsumerAwaiting, event: AllProducersSeen}:
 		newState = ConsumerAndProcuder
 
-	case StateEvent{state: NoConsumerAndNoProducer, event: NewProducer}:
+	case StateEvent{state: NoConsumerAndNoProducer, event: AllProducersSeen}:
 		newState = ProducerAwaiting
-	case StateEvent{state: ProducerAwaiting, event: NewConsumer}:
+	case StateEvent{state: ProducerAwaiting, event: AllConsumersSeen}:
 		newState = ConsumerAndProcuder
 
 	case StateEvent{state: ConsumerAndProcuder, event: LastConsumerClose}:
@@ -163,7 +197,7 @@ func update(
 
 	case StateEvent{state: ProducerAwaiting, event: LastProducerClose}:
 		newState = ProducerAwaitingAndCloseFirst
-	case StateEvent{state: ProducerAwaitingAndCloseFirst, event: NewConsumer}:
+	case StateEvent{state: ProducerAwaitingAndCloseFirst, event: AllConsumersSeen}:
 		newState = ProducerCloseFirst
 
 	case StateEvent{state: ConsumerAwaiting, event: LastProducerClose}:
@@ -182,29 +216,37 @@ func update(
 
 type Balancer struct {
 	sync.RWMutex
-	producerNetwork string
-	producerAddress string
-	consumerNetwork string
-	consumerAddress string
-	ch              *ConsumerHandler
-	ph              *ProducerHandler
-	stream          chan []byte
-	quit            chan struct{}
+	producerNetwork   string
+	producerAddress   string
+	producersPoolSize int
+	consumerNetwork   string
+	consumerAddress   string
+	consumersPoolSize int
+	ch                *ConsumerHandler
+	ph                *ProducerHandler
+	stream            chan []byte
+	quit              chan struct{}
+	consumersSeen     int
+	producersSeen     int
 }
 
 // New Balancer service.
 func New(producerNetwork string, producerAddress string,
-	consumerNetwork string, consumerAddress string) *Balancer {
+	consumerNetwork string, consumerAddress string, producersPoolSize int, consumersPoolSize int) *Balancer {
 	return &Balancer{
-		RWMutex:         sync.RWMutex{},
-		producerNetwork: producerNetwork,
-		producerAddress: producerAddress,
-		consumerNetwork: consumerNetwork,
-		consumerAddress: consumerAddress,
-		ch:              &ConsumerHandler{}, // nolint: exhaustivestruct
-		ph:              &ProducerHandler{}, // nolint: exhaustivestruct
-		stream:          make(chan []byte),
-		quit:            make(chan struct{}),
+		RWMutex:           sync.RWMutex{},
+		producerNetwork:   producerNetwork,
+		producerAddress:   producerAddress,
+		producersPoolSize: producersPoolSize,
+		consumerNetwork:   consumerNetwork,
+		consumerAddress:   consumerAddress,
+		consumersPoolSize: consumersPoolSize,
+		ch:                &ConsumerHandler{}, // nolint: exhaustivestruct
+		ph:                &ProducerHandler{}, // nolint: exhaustivestruct
+		stream:            make(chan []byte),
+		quit:              make(chan struct{}),
+		consumersSeen:     0,
+		producersSeen:     0,
 	}
 }
 
@@ -220,6 +262,8 @@ func (b *Balancer) action(state State) {
 
 func (b *Balancer) resetSession() {
 	b.stream = make(chan []byte, 1)
+	b.consumersSeen = 0
+	b.producersSeen = 0
 
 	log.Logger.Info().Msg("Start to a new stream")
 
@@ -237,6 +281,7 @@ func (b *Balancer) closeStream() {
 
 // Start the balancer Service and wait for clients.
 func (b *Balancer) Start() {
+	log.Info().Int("ConsumersPool", b.consumersPoolSize).Msg("balancer Starting")
 	log.Debug().Msg("Lock")
 	b.Lock()
 	events := make(chan Event, 1)
@@ -272,11 +317,14 @@ func (b *Balancer) Start() {
 
 	for event := range events {
 		log.Debug().Int("state", int(state)).Int("event", int(event)).Msg("Start update")
-		event, consumers, producers = updateClients(event, consumers, producers)
+		event, consumers, b.consumersSeen = updateConsumers(event, consumers, b.consumersPoolSize, b.consumersSeen)
+		event, producers, b.producersSeen = updateProducers(event, producers, b.producersPoolSize, b.producersSeen)
 
 		log.Debug().
 			Int("consumers", consumers).
+			Int("consumersSeen", b.consumersSeen).
 			Int("producers", producers).
+			Int("producersSeen", b.producersSeen).
 			Int("computedEvent", int(event)).
 			Msg("consumers producer stats")
 
